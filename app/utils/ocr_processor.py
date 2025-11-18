@@ -30,7 +30,24 @@ class OCRProcessor:
     def _setup_tesseract_path(self):
         """Configuration automatique du chemin Tesseract"""
         try:
-            if sys.platform == "win32":
+            # Sur Linux/serveur, Tesseract est dans le PATH
+            # Pas besoin de spécifier le chemin manuellement
+            if sys.platform == "linux":
+                # Vérifier que tesseract est installé
+                import shutil
+                tesseract_path = shutil.which("tesseract")
+                if tesseract_path:
+                    pytesseract.pytesseract.tesseract_cmd = tesseract_path
+                    logger.info(f"Tesseract trouvé : {tesseract_path}")
+                else:
+                    # Fallback : chemins Linux standards
+                    for path in ["/usr/bin/tesseract", "/usr/local/bin/tesseract"]:
+                        if os.path.exists(path):
+                            pytesseract.pytesseract.tesseract_cmd = path
+                            logger.info(f"Tesseract trouvé : {path}")
+                            break
+
+            elif sys.platform == "win32":
                 possible_paths = [
                     r"C:\Program Files\Tesseract-OCR\tesseract.exe",
                     r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
@@ -50,6 +67,7 @@ class OCRProcessor:
                         logger.info(f"Tesseract trouvé : {path}")
                         break
 
+            # Vérifier la version
             version = pytesseract.get_tesseract_version()
             logger.info(f"Tesseract {version} configuré avec succès")
 
