@@ -8,6 +8,7 @@ import logging
 import re
 import os
 import sys
+import shutil
 
 # ===================================================================
 # CORRECTIFS PILLOW - ÉLIMINE L'ERREUR "image file is truncated"
@@ -24,9 +25,12 @@ class OCRProcessor:
         self.supported_languages = ['fra', 'eng']
         self._setup_tesseract_path()
 
+    # Pour linux
+    if shutil.which("tesseract") is None:
+        raise Exception("Tesseract n'est pas installé dans l'environnement !")
 
     # Ajouter cette ligne au début de __init__
-    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+    # pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
     def _setup_tesseract_path(self):
         """Configuration automatique du chemin Tesseract"""
         try:
