@@ -1,0 +1,57 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+
+generator client {
+  provider             = "prisma-client-py"
+  interface            = "asyncio"
+  recursive_type_depth = 5
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model Dortoir {
+  id            String         @id @default(auto()) @map("_id") @db.ObjectId
+  code          String         @unique
+  name          String
+  capacity      Int
+  current_count Int            @default(0)
+  gender        String         // "M" ou "F"
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  registrations Registration[]
+
+  @@map("dortoirs")
+}
+
+model Registration {
+  id                  String    @id @default(auto()) @map("_id") @db.ObjectId
+  matricule           String    @unique
+  nom                 String
+  prenom              String
+  sexe                String
+  age                 Int
+  niveau_academique   String
+  dortoir_code        String
+  dortoir             Dortoir   @relation(fields: [dortoir_code], references: [code])
+  allergie            String?   @default("RAS")
+  antecedent_medical  String?   @default("Néant")
+  payment_status      String    @default("completed") // "pending", "awaiting_proof", "completed"
+  payment_timestamp   DateTime?
+  transaction_id      String?   @unique
+  // qr_code_data        String?   // Chaîne pour générer le QR code
+  photo_url           String?
+  validated           Boolean   @default(false)
+  registration_date   DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+  commune_habitation  String
+  receipt_url         String?
+
+  @@map("registrations")
+}
