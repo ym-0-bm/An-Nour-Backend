@@ -1,38 +1,23 @@
-services:
-  - type: web
-    name: annour-backend
-    env: python
-    region: frankfurt
-    plan: free
-    branch: main
-    buildCommand: |
-      echo "🔧 Installing system dependencies..."
-      apt-get update -qq
-      apt-get install -y -qq \
-        tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng \
-        libgl1 libglib2.0-0 libsm6 libxrender1 libxext6
+FROM python:3.11-slim
 
-      echo "📦 Upgrading pip..."
-      pip install --upgrade pip --quiet
+# Installer dépendances système
+RUN apt-get update && \
+    apt-get install -y tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-      echo "📚 Installing Python packages..."
-      pip install -r requirements.txt --quiet
+# Installer dépendances Python
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-      echo "🔨 Generating Prisma client..."
-      prisma generate
+# Copier le projet
+COPY . .
 
-      echo "✅ Build complete!"
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
-    healthCheckPath: /health
-    envVars:
-      - key: DATABASE_URL
-        sync: false
-      - key: API_V1_STR
-        value: /api/v1
-      - key: PROJECT_NAME
-        value: Inscription System An-Nour
-      - key: MEDIA_DIR
-        value: media
-      - key: PYTHON_VERSION
-        value: 3.11.9
-    autoDeploy: true
+# Générer Prisma
+RUN prisma generate
+
+# Exposer
+EXPOSE 8000
+
+# Commande de démarrage
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
