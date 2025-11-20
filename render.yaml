@@ -6,6 +6,7 @@ services:
     branch: main
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
+    autoDeploy: true
     envVars:
       - key: DATABASE_URL
         sync: false
