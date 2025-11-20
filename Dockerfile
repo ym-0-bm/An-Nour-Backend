@@ -13,6 +13,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copier le projet
 COPY . .
 
+# S'assurer que le dossier media existe
+RUN mkdir -p /app/media
+RUN mkdir -p /app/media/participants_photos
+
 # Générer Prisma
 RUN prisma generate
 
