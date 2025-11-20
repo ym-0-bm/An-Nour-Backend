@@ -5,6 +5,9 @@ RUN apt-get update && \
     apt-get install -y tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Créer un utilisateur non-root pour la sécurité
+RUN useradd -m -u 1000 appuser
+
 # Installer dépendances Python
 WORKDIR /app
 COPY requirements.txt .
@@ -13,12 +16,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copier le projet
 COPY . .
 
-# S'assurer que le dossier media existe
-RUN mkdir -p /app/media
-RUN mkdir -p /app/media/participants_photos
+# Créer dossiers media avec permissions
+RUN mkdir -p /app/media/participants_photos && \
+    chown -R appuser:appuser /app
 
 # Générer Prisma
 RUN prisma generate
+
+# Changer vers utilisateur non-root
+USER appuser
 
 # Exposer
 EXPOSE 8000
