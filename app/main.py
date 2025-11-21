@@ -24,7 +24,12 @@ app = FastAPI(
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",               # pour dev React
+        "https://an-nour25.vercel.app",       # pour site front en production
+        "https://www.an-nour25.com",
+        "https://an-nour25-4yprk8vn3-mamadoutuo77-gmailcoms-projects.vercel.app",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
