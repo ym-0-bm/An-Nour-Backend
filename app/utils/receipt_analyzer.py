@@ -128,7 +128,7 @@ class ReceiptAnalyzer:
                 # Nettoie le nom
                 clean_name = self._clean_account_name(raw_name)
                 
-                # Enlève les suffixes numériques (K2MI10 → K2MI)
+                # Enlève les suffixes numériques
                 clean_name = re.sub(r'\d+$', '', clean_name)
                 
                 if len(clean_name) >= 2:
@@ -137,9 +137,7 @@ class ReceiptAnalyzer:
         
         # Fallback: noms connus (avec normalisation stricte)
         known = {
-            'K2MILO': 'K2Milo',
-            'K2MILO': 'K2Milo',  # Variantes possibles
-            'K2MI': 'K2Milo',    # K2MI10 → K2MI → K2Milo
+            'AN-NOUR': 'AN-NOUR',
         }
         
         for key, proper in known.items():
@@ -247,9 +245,9 @@ class ReceiptAnalyzer:
         # ❌ Mauvais destinataire (erreur prioritaire)
         if any("Nom du compte invalide" in e for e in errors):
             if account_name:
-                return f"Destinataire incorrect : vous avez payé '{account_name}', mais le paiement doit être fait à 'K2Milo'."
+                return f"Destinataire incorrect : vous avez payé '{account_name}', mais le paiement doit être fait à 'AN-NOUR'."
             else:
-                return "Impossible d'identifier le destinataire. Le paiement doit être envoyé à 'K2Milo'."
+                return "Impossible d'identifier le destinataire. Le paiement doit être envoyé à 'AN-NOUR'."
 
         # ❌ Cas général (multiples erreurs)
         return "Cette capture n'est pas une preuve de paiement valide. Validation refusée."
@@ -267,7 +265,7 @@ class ReceiptAnalyzer:
         
         # Validations strictes
         amount_ok = amount is not None and amount == expected_amount
-        name_ok = account_name in['K2Milo',"K2MILO",'K2Milo', 'K2Milo',  'K2MI']
+        name_ok = account_name in['AN-NOUR']
 
         # Vérifier que la transctionId est unique dans la base de données
         transaction_id_exist = await prisma.registration.find_first(
@@ -296,7 +294,7 @@ class ReceiptAnalyzer:
         if not is_wave:
             errors.append("Signature Wave manquante")
         if not name_ok:
-            errors.append(f"Nom du compte invalide : '{account_name}' (doit être 'K2Milo')")
+            errors.append(f"Nom du compte invalide : '{account_name}' (doit être 'AN-NOUR')")
         if transaction_id_exist:
             errors.append(f"Transaction id exist : {transaction_id}")
         # ✅ Message simplifié pour l'utilisateur
@@ -319,7 +317,7 @@ class ReceiptAnalyzer:
                 "isWaveReceipt": is_wave,
                 "hasValidAccountName": name_ok
             },
-            "errors": errors,  # Garde les erreurs techniques pour debug (optionnel)
+            "errors": errors,  # Garde les erreurs trezrzzzzzechniques pour debug (optionnel)
             "warnings": [],
             "debugText": extracted_text[:1000]
         }

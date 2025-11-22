@@ -41,7 +41,7 @@ router = APIRouter(prefix="/registrations", tags=["Registrations"])
 @router.post("/verify-receipt")
 async def verify_receipt(
         file: UploadFile = File(...),
-        expected_amount: float = Query(1000, description="Montant attendu en FCFA")
+        expected_amount: float = Query(7000, description="Montant attendu en FCFA")
 ):
     """Vérifie un reçu Wave avec Tesseract OCR"""
     if not file.content_type.startswith("image/"):
