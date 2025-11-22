@@ -25,10 +25,12 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",               # pour dev React
+        "*"                                 # pour toute origine
+        "http://localhost:3000",             # pour dev React
         "https://an-nour25.vercel.app",       # pour site front en production
         "https://www.an-nour25.com",
         "https://an-nour25-4yprk8vn3-mamadoutuo77-gmailcoms-projects.vercel.app",
+        "http://annourpwa.netlify.app"
     ],
     allow_credentials=True,
     allow_methods=["*"],
