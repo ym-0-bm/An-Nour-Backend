@@ -117,7 +117,7 @@ async def create_registration(data: RegistrationCreate):
         "dortoir": dormitory.dortoir,
         "transaction_id": payment.transactionId
     })"""
-    print("dortoir ID :",dormitory.dortoirId)
+
     # Créer l'inscription (sans le montant)
     registration = await prisma.registration.create(
         data={

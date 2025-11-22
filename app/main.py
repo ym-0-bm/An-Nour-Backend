@@ -32,7 +32,7 @@ app.add_middleware(
         "https://an-nour25-4yprk8vn3-mamadoutuo77-gmailcoms-projects.vercel.app",
         "http://annourpwa.netlify.app"
     ],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
