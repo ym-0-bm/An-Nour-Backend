@@ -25,47 +25,32 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialiser les services OCR
-logger.info("🚀 Initialisation du serveur OCR...")
-try:
-    ocr_processor = OCRProcessor()  # ✅ Maintenant c'est une classe
-    receipt_analyzer = ReceiptAnalyzer()  # ✅ Maintenant c'est une classe
-    logger.info("✅ Serveur prêt!\n")
-except Exception as e:
-    logger.error(f"❌ Erreur initialisation:{e}")
-    raise
+ocr_processor = OCRProcessor()
+receipt_analyzer = ReceiptAnalyzer()
 
 router = APIRouter(prefix="/registrations", tags=["Registrations"])
 
 
 @router.post("/verify-receipt")
-async def verify_receipt(
-        file: UploadFile = File(...),
-        expected_amount: float = Query(7000, description="Montant attendu en FCFA")
-):
-    """Vérifie un reçu Wave avec Tesseract OCR"""
+async def verify_receipt(file: UploadFile = File(...),
+                         expected_amount: int = Query(7000, description="Montant attendu en FCFA")):
     if not file.content_type.startswith("image/"):
-        raise HTTPException(400, "Le fichier doit être une image")
-
+        raise HTTPException(status_code=400, detail="Le fichier doit être une image")
     try:
-        logger.info(f"\n{'=' * 60}")
         logger.info(f"📸 {file.filename} | 💰 {expected_amount} FCFA")
-        logger.info(f"{'=' * 60}")
-
         contents = await file.read()
 
-
-        # OCR
+        # OCR (prétraitement obligatoire à l'intérieur de process_image)
         text = ocr_processor.process_image(contents)
 
         # Analyse
         result = await receipt_analyzer.analyze_receipt(text, expected_amount)
 
         return JSONResponse(content=result, status_code=200)
-
     except Exception as e:
-        logger.error(f"❌ Erreur: {str(e)}", exc_info=True)
-        raise HTTPException(500, f"Erreur serveur: {str(e)}")
+        logger.exception("Erreur lors de la vérification du reçu")
+
+        raise HTTPException(status_code=500, detail=f"Erreur serveur: {str(e)}")
 
 
 
@@ -99,7 +84,7 @@ async def create_registration(data: RegistrationCreate):
     # Générer le matricule
     matricule = await generate_matricule(dormitory.dortoirId)
 
-    # Vérifier que la transctionId est unique dans la base de données
+    # Vérifier que la transactionId est unique dans la base de données
     transaction_id = await prisma.registration.find_first(
     where={"transaction_id": payment.transactionId}
     )
@@ -189,7 +174,7 @@ async def get_dortoirs(sexe: Optional[str] = Query(None, description="Filtrer pa
             )
         where["gender"] = sexe
 
-    # Récupérer les dortoirs (sans orderBy qui pose problème avec MongoDB)
+    # Récupérer les dortoirs (sans orderBy qui pose un problème avec MongoDB)
     dortoirs = await prisma.dortoir.find_many(where=where)
 
     # Trier en Python
