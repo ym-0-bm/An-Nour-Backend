@@ -32,9 +32,7 @@ class ReceiptAnalyzer:
         return clean
 
     def normalize_amount(self, raw):
-        print("raw 1 : ", raw)
         raw = raw.replace(" ", "").replace("\u202F", "")
-        print("raw 2 : ", raw)
         if "," in raw and "." in raw:
             raw = raw.replace(",", "")
         elif "," in raw:
@@ -54,9 +52,7 @@ class ReceiptAnalyzer:
 
         if not raw_text:
             return None
-        print("raw text : ", raw_text)
         text_norm = raw_text.replace("\u00A0", " ").replace(" ", " ").lower()
-        print("textn : ", text_norm)
 
         # 1️⃣ PRIORITÉ : motifs proches du mot "montant" / "paiement"
         priority_patterns = [
@@ -66,14 +62,12 @@ class ReceiptAnalyzer:
 
         for pat in priority_patterns:
             m = re.search(pat, text_norm)
-            print("m : ", m)
             if m:
                 raw = m.group(1) if len(m.groups()) == 1 else m.group(2)
                 return self.normalize_amount(raw)
 
         # 2️⃣ EXTRACTION DE TOUS LES MONTANTS POSSIBLES
         candidates = []
-        print("candidates [] : ", candidates)
 
         for m in re.finditer(r"-?[0-9]{1,3}(?:[ .,\u202F][0-9]{3})*", text_norm):
             raw = m.group(0).replace("f", "")
@@ -281,15 +275,10 @@ class ReceiptAnalyzer:
         logger.info("Analyse reçu Wave (OCR multilingue + très bruité)")
 
         # Extractions
-        print("---------------extract amount--------------------")
         amount = self.extract_amount(extracted_text)
-        print("---------------extract transaction--------------------")
         transaction_id = self.extract_transaction_id(extracted_text)
-        print("---------------extract account--------------------")
         account_name = self.extract_account_name(extracted_text)
-        print("---------------check status--------------------")
         status_ok = self.check_status(extracted_text)
-        print("---------------check wave--------------------")
         is_wave = self.check_wave(extracted_text)
 
         # Validations strictes
