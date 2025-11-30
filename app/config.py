@@ -9,9 +9,9 @@ class Settings(BaseSettings):
     MEDIA_DIR: str = "media"
 
     # Cloudinary
-    CLOUDINARY_CLOUD_NAME: str = "dhyzc2lme"
-    CLOUDINARY_API_KEY: str = "158713382696999"
-    CLOUDINARY_API_SECRET: str = "sP1F8_lIFwnEAD14udb-7Yxr5EU"
+    CLOUDINARY_CLOUD_NAME: str
+    CLOUDINARY_API_KEY: str
+    CLOUDINARY_API_SECRET: str
 
     class Config:
         env_file = ".env"
