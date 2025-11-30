@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query, UploadFile, File
 from fastapi.responses import JSONResponse
 from typing import Optional, List
 from datetime import datetime
+import cloudinary.uploader
 import os
 import json
 import logging
@@ -360,6 +361,7 @@ async def update_registration(id: str, data: RegistrationUpdate):
 async def upload_photo(matricule: str, photo: UploadFile = File(...)):
     """Ajouter/modifier la photo du participant"""
 
+    # Vérifier que l'inscription existe
     registration = await prisma.registration.find_unique(
         where={"matricule": matricule}
     )
@@ -367,34 +369,62 @@ async def upload_photo(matricule: str, photo: UploadFile = File(...)):
         raise HTTPException(status_code=404, detail="Inscription non trouvée")
 
     # Créer le dossier s'il n'existe pas
-    photo_dir = os.path.join(settings.MEDIA_DIR, "participants_photos")
-    os.makedirs(photo_dir, exist_ok=True)
+    # photo_dir = os.path.join(settings.MEDIA_DIR, "participants_photos")
+    # os.makedirs(photo_dir, exist_ok=True)
 
     # Sauvegarder la photo
-    extension = photo.filename.split(".")[-1]
-    filename = f"{matricule}.{extension}"
-    filepath = os.path.join(photo_dir, filename)
+    # extension = photo.filename.split(".")[-1]
+    # filename = f"{matricule}.{extension}"
+    # filepath = os.path.join(photo_dir, filename)
 
-    with open(filepath, "wb") as f:
+    # with open(filepath, "wb") as f:
         content = await photo.read()
         f.write(content)
 
+    # Lire le contenu du fichier
+    file_bytes = await photo.read()
+
+    # Envoyer vers Cloudinary
+    try:
+        upload_result = cloudinary.uploader.upload(
+            file_bytes,
+            folder="participants_photos",  # dossier dans cloudinary
+            public_id=matricule,  # nom du fichier
+            overwrite=True,  # remplace ancienne photo
+            resource_type="image"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur Cloudinary: {str(e)}")
+
     # Mettre à jour l'inscription
-    photo_url = f"/media/participants_photos/{filename}"
-    await prisma.registration.update(
+    # photo_url = f"/media/participants_photos/{filename}"
+    # await prisma.registration.update(
         where={"matricule": matricule},
         data={
             "photo_url": photo_url,
             "validated": True
         }
-    )
+    # )
 
-    return {
-        "matricule": matricule,
-        "photo_url": photo_url,
-        "validated": True,
-        "message": "Photo ajoutée avec succès"
-    }
+    # return {
+        # "matricule": matricule,
+        # "photo_url": photo_url,
+        # "validated": True,
+        # "message": "Photo ajoutée avec succès"
+    # }
+
+    # Récupérer l'URL sécurisée
+    image_url = upload_result.get("secure_url")
+    print("img : ", image_url)
+
+    # Mettre à jour la BDD
+    await prisma.registration.update(
+        where={"matricule": matricule},
+        data={
+            "photo_url": image_url,
+            "validated": True
+        }
+    )
 
 
 # DELETE - Supprimer une inscription
