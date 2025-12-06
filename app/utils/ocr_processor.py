@@ -239,7 +239,7 @@ class OCRProcessor:
         # replace weird hyphens
         t = t.replace("–", "-").replace("—", "-")
         # try to fix common l/1/O/0 confusions in context (not globally)
-        t = re.sub(r"(?<=\d)[\s,\.](?=\d{3}\b)", "", t)  # join thousand groups like '7.000' -> '7000' but keep correct separators elsewhere
+        t = re.sub(r"(?<=\d)[\s,\.](?=\d{3}\b)", "", t)  # join thousand groups like '6.000' -> '6000' but keep correct separators elsewhere
         return t.strip()
 
     def process_image(self, image_content: bytes) -> str:

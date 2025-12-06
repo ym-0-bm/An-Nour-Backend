@@ -52,6 +52,8 @@ model Registration {
   updated_at          DateTime  @updatedAt
   commune_habitation  String
   receipt_url         String?
+  contact_parent      String
+  contact_seminariste String?
 
   @@map("registrations")
 }

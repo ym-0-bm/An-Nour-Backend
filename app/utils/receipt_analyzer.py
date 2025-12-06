@@ -57,7 +57,7 @@ class ReceiptAnalyzer:
         # 1️⃣ PRIORITÉ : motifs proches du mot "montant" / "paiement"
         priority_patterns = [
             r"(montant|amount|paiement|montant)[^\d-]{0,20}(-?[0-9]{1,3}(?:[ .,\u202F][0-9]{3})*)f",
-            r"^(-?[0-9]{1,3}(?:[ .,\u202F][0-9]{3})*)f",  # grand montant affiché en haut ("-7.000F")
+            r"^(-?[0-9]{1,3}(?:[ .,\u202F][0-9]{3})*)f",  # grand montant affiché en haut ("-6.000F")
         ]
 
         for pat in priority_patterns:

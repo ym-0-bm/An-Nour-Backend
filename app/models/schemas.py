@@ -11,6 +11,8 @@ class PersonalInfo(BaseModel):
     communeHabitation: str
     niveauAcademique: str
     communeAutre: Optional[str] = ""
+    contactParent: str
+    contactSeminariste: Optional[str] = ""
 
 
 class DormitoryInfo(BaseModel):
@@ -75,6 +77,8 @@ class RegistrationResponse(BaseModel):
     age: int
     niveau_academique: str
     commune_habitation: str
+    contact_parent: str
+    contact_seminariste: Optional[str] = None
     dortoir_code: str
     dortoir_name: Optional[str] = None
     allergie: Optional[str]

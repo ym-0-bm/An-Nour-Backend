@@ -34,7 +34,7 @@ router = APIRouter(prefix="/registrations", tags=["Registrations"])
 
 @router.post("/verify-receipt")
 async def verify_receipt(file: UploadFile = File(...),
-                         expected_amount: int = Query(7000, description="Montant attendu en FCFA")):
+                         expected_amount: int = Query(6000, description="Montant attendu en FCFA")):
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Le fichier doit être une image")
     try:
@@ -115,6 +115,8 @@ async def create_registration(data: RegistrationCreate):
             "niveau_academique": personal.niveauAcademique,
             # Gère commune_habitation avec fallback sur communeAutre
             "commune_habitation": personal.communeHabitation if personal.communeHabitation else personal.communeAutre,
+            "contact_parent": personal.contactParent,
+            "contact_seminariste": personal.contactSeminariste,
             "dortoir_code": dormitory.dortoirId,
             "allergie": health.allergie or "RAS",
             "antecedent_medical": health.antecedentMedical or "Néant",
@@ -146,6 +148,8 @@ async def create_registration(data: RegistrationCreate):
         sexe=result.sexe,
         age=result.age,
         commune_habitation=result.commune_habitation,
+        contact_parent=result.contact_parent,
+        contact_seminariste=result.contact_seminariste,
         niveau_academique=result.niveau_academique,
         dortoir_code=result.dortoir_code,
         dortoir_name=result.dortoir.name if result.dortoir else None,
@@ -160,8 +164,45 @@ async def create_registration(data: RegistrationCreate):
     )
 
 
-# GET ALL DORTOIRS - Récupérer tous les dortoirs avec places disponibles
+# GET DORTOIRS - Récupérer tous les dortoirs avec places disponibles sans les dortoirs de pépinière
 @router.get("/dortoirs", response_model=List[DortoirResponse])
+async def get_dortoirs(sexe: Optional[str] = Query(None, description="Filtrer par sexe: M ou F")):
+    """Récupérer tous les dortoirs avec le nombre de places disponibles, filtrés par sexe si spécifié sans les dortoirs de pépinière"""
+
+    # Construire le filtre en fonction du sexe
+    where = {}
+    if sexe:
+        if sexe not in ["M", "F"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Le paramètre 'sexe' doit être 'M' ou 'F'"
+            )
+        where["gender"] = sexe
+
+    # Exclure le dortoir pepinière correspondant
+    pepiniere_code = f"PEPINIERE-{'G' if sexe == 'M' else 'F'}"
+    where["code"] = {"not": pepiniere_code}
+
+    # Récupérer les dortoirs (sans orderBy qui pose un problème avec MongoDB)
+    dortoirs = await prisma.dortoir.find_many(where=where)
+
+    # Trier en Python
+    dortoirs_sorted = sorted(dortoirs, key=lambda d: (d.gender, d.code))
+
+    return [
+        DortoirResponse(
+            code=d.code,
+            name=d.name,
+            capacity=d.capacity,
+            current_count=d.current_count,
+            available=d.capacity - d.current_count,
+            gender=d.gender
+        )
+        for d in dortoirs_sorted
+    ]
+
+# GET ALL DORTOIRS - Récupérer tous les dortoirs avec places disponibles
+@router.get("/alldortoirs", response_model=List[DortoirResponse])
 async def get_dortoirs(sexe: Optional[str] = Query(None, description="Filtrer par sexe: M ou F")):
     """Récupérer tous les dortoirs avec le nombre de places disponibles, filtrés par sexe si spécifié"""
 
@@ -192,7 +233,6 @@ async def get_dortoirs(sexe: Optional[str] = Query(None, description="Filtrer pa
         )
         for d in dortoirs_sorted
     ]
-
 
 # READ ALL - Récupérer toutes les inscriptions
 @router.get("", response_model=PaginatedResponse)
@@ -477,8 +517,8 @@ async def get_statistics():
             "available": dortoir.capacity - count
         }
 
-    # Revenue (7000 FCFA par inscription complétée)
-    total_revenue = completed * 7000
+    # Revenue (6000 FCFA par inscription complétée)
+    total_revenue = completed * 6000
 
     return {
         "total_registrations": total,
