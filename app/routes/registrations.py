@@ -67,8 +67,8 @@ async def create_registration(data: RegistrationCreate):
     payment = data.paymentInfo
 
     # print les données reçues
-    print("Données reçues pour l'inscription :")
-    print(data.model_dump())
+    # print("Données reçues pour l'inscription :")
+    # print(data.model_dump())
 
     # Vérifier que le dortoir existe
     dortoir = await prisma.dortoir.find_unique(where={"code": dormitory.dortoirId})
