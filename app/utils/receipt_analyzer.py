@@ -1,5 +1,5 @@
 # utils/receipt_analyzer.py
-from random import random
+import random
 import re
 import logging
 from typing import Optional, Dict, Any
@@ -94,13 +94,13 @@ class ReceiptAnalyzer:
         """
         # clean = self._clean_ocr(raw_text)
 
-        text_clean = raw_text.replace(" ", "").replace("\n", "").replace("-\n", "").replace("-", "")
-
+        text_clean = (raw_text.replace(" ", "")
+                      .replace("\n", "")
+                      .replace("-\n\nTransactionID\n\n", "")
+                      .replace("-", ""))
+        print(text_clean)
         # ID Wave = 12 à 20 caractères alphanumériques
         m = re.findall(r"[A-Z0-9]{15,20}", text_clean)
-
-        if not m:
-            return None
 
         # Filtre : Wave ID commence toujours par T (TPK…, TZ5…, TMR…)
         ids = [x for x in m if x.startswith("T")]
@@ -108,7 +108,6 @@ class ReceiptAnalyzer:
         if ids:
             return ids[0]
         # s'il trouve pas de ID valide qu'il génére un du format TANNOURXXXXXX
-        
         random_id = "TANNOUR" + "".join(random.choices("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", k=8))
         return random_id
 
