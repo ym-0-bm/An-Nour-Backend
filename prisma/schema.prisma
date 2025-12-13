@@ -55,5 +55,154 @@ model Registration {
   contact_parent      String
   contact_seminariste String?
 
+  notes     Note[]
+  bulletins Bulletin[]
+
   @@map("registrations")
+}
+
+// ============================================
+// MODULE SCIENTIFIQUE
+// ============================================
+
+model Matiere {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  code        String   @unique
+  nom         String
+  coefficient Float    @default(1)
+  description String?
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+  
+  notes       Note[]
+
+  @@map("matieres")
+}
+
+model Note {
+  id              String       @id @default(auto()) @map("_id") @db.ObjectId
+  matricule       String
+  seminariste     Registration @relation(fields: [matricule], references: [matricule])
+  matiere_code    String
+  matiere         Matiere      @relation(fields: [matiere_code], references: [code])
+  note            Float        // Note sur 20
+  type_evaluation String       // "Devoir", "Composition", "Examen"
+  observation     String?
+  created_by      String       // ID du professeur/admin
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+
+
+  @@map("notes")
+}
+
+model Bulletin {
+  id                String       @id @default(auto()) @map("_id") @db.ObjectId
+  numero            String       @unique
+  matricule         String
+  seminariste       Registration @relation(fields: [matricule], references: [matricule])
+  annee_scolaire    String       // "AnNour25"
+  moyenne_generale  Float
+  total_coefficient Float
+  rang              Int?
+  effectif_classe   Int?
+  mention           String?      // "Excellent", "Très bien", "Bien", "Passable"
+  observations      String?
+  date_conseil      DateTime?
+  pdf_url           String?
+  generated_at      DateTime     @default(now())
+  generated_by      String
+
+  @@map("bulletins")
+}
+
+// ============================================
+// MODULE FINANCES
+// ============================================
+
+model Transaction {
+  id                String    @id @default(auto()) @map("_id") @db.ObjectId
+  reference         String    @unique
+  type              String    // "ENTREE" ou "SORTIE"
+  categorie         String    // "Inscription", "Don", "Achat matériel", cas social, etc.
+  montant           Float
+  devise            String    @default("FCFA")
+  libelle           String
+  description       String?
+  beneficiaire      String?   // Nom du bénéficiaire (pour sorties)
+  payeur            String?   // Nom du payeur (pour entrées)
+  matricule         String?   // Si lié à un séminariste
+  mode_paiement     String    // "Wave", "Espèces", "Virement", "Mobile Money"
+  numero_compte     String?
+  piece_justificative String? // URL du reçu/facture
+  statut            String    @default("validee") // "validee", "en_attente", "annulee"
+  date_transaction  DateTime
+  created_by        String    // ID de l'utilisateur qui a créé
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+  is_deleted        Boolean   @default(false)
+  deleted_at        DateTime?
+  deleted_by        String?
+  deleted_reason    String?
+  
+  // Traçabilité
+  audit_logs        AuditLog[]
+
+  @@map("transactions")
+}
+
+model AuditLog {
+  id             String      @id @default(auto()) @map("_id") @db.ObjectId
+  transaction_id String
+  transaction    Transaction @relation(fields: [transaction_id], references: [id])
+  action         String      // "CREATE", "UPDATE", "DELETE", "RESTORE"
+  field_changed  String?     // Champ modifié (pour UPDATE)
+  old_value      String?     // Ancienne valeur
+  new_value      String?     // Nouvelle valeur
+  modified_by    String      // ID utilisateur
+  modified_at    DateTime    @default(now())
+  ip_address     String?
+  user_agent     String?
+
+  @@map("audit_logs")
+}
+
+model RapportFinancier {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  numero          String   @unique
+  titre           String
+  periode_debut   DateTime
+  periode_fin     DateTime
+  type_rapport    String   // "mensuel", "trimestriel", "annuel", "personnalise"
+  total_entrees   Float
+  total_sorties   Float
+  solde           Float
+  nb_transactions Int
+  pdf_url         String?
+  generated_by    String
+  generated_at    DateTime @default(now())
+  commentaires    String?
+
+  @@map("rapports_financiers")
+}
+
+// ============================================
+// SYSTÈME D'AUTHENTIFICATION 
+// ============================================
+
+model User {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  email      String   @unique
+  username   String   @unique
+  password   String   // Hash bcrypt
+  nom        String
+  prenom     String
+  role       String   // "admin", "scientifique", "finances", "consultation"
+  is_active  Boolean  @default(true)
+  last_login DateTime?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@map("users")
 }

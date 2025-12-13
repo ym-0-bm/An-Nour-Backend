@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 from app.config import settings
 from app.database import connect_db, disconnect_db
-from app.routes import registrations
+from app.routes import registrations, scientific
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -42,6 +42,7 @@ app.mount("/media", StaticFiles(directory="media"), name="media")
 
 # Routes
 app.include_router(registrations.router, prefix=settings.API_V1_STR)
+app.include_router(scientific.router, prefix=settings.API_V1_STR)
 
 @app.get("/")
 async def root():
