@@ -57,6 +57,7 @@ model Registration {
 
   notes     Note[]
   bulletins Bulletin[]
+  seminaristes Seminariste[]
 
   @@map("registrations")
 }
@@ -64,6 +65,15 @@ model Registration {
 // ============================================
 // MODULE SCIENTIFIQUE
 // ============================================
+
+model Seminariste {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  matricule   String   @unique
+  registration Registration @relation(fields: [matricule], references: [matricule])
+  niveau      String?
+
+  @@map("seminaristes")
+}
 
 model Matiere {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
