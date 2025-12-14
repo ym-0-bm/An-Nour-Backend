@@ -62,7 +62,13 @@ async def get_seminaristes(
             "sexe": s.sexe,
             "age": s.age,
             "niveau_academique": s.niveau_academique,
+            "commune_habitation": s.commune_habitation,
+            "contact_parent": s.contact_parent,
+            "contact_seminariste": s.contact_seminariste,
             "dortoir": s.dortoir.name if s.dortoir else None,
+            "allergie": s.allergie,
+            "antecedent_medical": s.antecedent_medical,
+            "registration_date": s.registration_date,
             "photo_url": s.photo_url
         }
         for s in seminaristes_sorted
@@ -191,8 +197,7 @@ async def create_note(data: NoteCreate, created_by: str = "admin"):
 @router.get("/notes", response_model=List[NoteResponse])
 async def get_notes(
         matricule: Optional[str] = None,
-        matiere_code: Optional[str] = None,
-        annee_scolaire: Optional[str] = None
+        matiere_code: Optional[str] = None
 ):
     """Liste des notes avec filtres"""
 
@@ -201,8 +206,6 @@ async def get_notes(
         where["matricule"] = matricule
     if matiere_code:
         where["matiere_code"] = matiere_code
-    if annee_scolaire:
-        where["annee_scolaire"] = annee_scolaire
 
     notes = await prisma.note.find_many(
         where=where,
@@ -286,11 +289,10 @@ async def delete_note(id: str):
 async def generate_bulletin(data: BulletinGenerate, generated_by: str = "admin"):
     """Générer un bulletin"""
 
-    # Récupérer toutes les notes du séminariste pour la période
+    # Récupérer toutes les notes du séminariste
     notes = await prisma.note.find_many(
         where={
-            "matricule": data.matricule,
-            "annee_scolaire": data.annee_scolaire
+            "matricule": data.matricule
         },
         include={"matiere": True}
     )
@@ -359,8 +361,7 @@ async def get_bulletin(numero: str):
     # Récupérer les notes
     notes = await prisma.note.find_many(
         where={
-            "matricule": bulletin.matricule,
-            "annee_scolaire": bulletin.annee_scolaire
+            "matricule": bulletin.matricule
         },
         include={"matiere": True}
     )
@@ -415,3 +416,45 @@ async def get_bulletins(
         }
         for b in bulletins
     ]
+
+# ============================================
+# STATISTIQUES SCIENTIFIQUES
+# ============================================
+
+@router.get("/stats/scientifiques", response_model=StatsScientifiques)
+async def get_stats_scientifiques():
+    """Statistiques du module scientifique"""
+
+    total_seminaristes = await prisma.registration.count()
+
+    total_matieres = await prisma.matiere.count()
+
+    total_notes = await prisma.note.count()
+
+    notes = await prisma.note.find_many(
+        include={"matiere": True}
+    )
+
+    if not notes:
+        moyenne_generale = 0
+    else:
+        total_points = sum(
+            note.note * note.matiere.coefficient
+            for note in notes
+        )
+        total_coefficients = sum(
+            note.matiere.coefficient
+            for note in notes
+        )
+
+        moyenne_generale = (
+            round(total_points / total_coefficients, 2)
+            if total_coefficients > 0 else 0
+        )
+
+    return {
+        "total_seminaristes": total_seminaristes,
+        "total_matieres": total_matieres,
+        "total_notes": total_notes,
+        "moyenne_generale": moyenne_generale
+    }

@@ -49,7 +49,6 @@ class NoteCreate(BaseModel):
     matricule: str
     matiere_code: str
     note: float
-    annee_scolaire: str  # "2024-2025"
     type_evaluation: str  # "Devoir", "Composition", "Examen"
     observation: Optional[str] = None
 
@@ -82,7 +81,6 @@ class NoteResponse(BaseModel):
     nom_matiere: Optional[str] = None
     coefficient: Optional[float] = None
     note: float
-    annee_scolaire: str
     type_evaluation: str
     observation: Optional[str]
     created_by: str
@@ -137,10 +135,6 @@ class BulletinDetail(BaseModel):
 
 class StatsScientifiques(BaseModel):
     total_seminaristes: int
+    total_matieres : int
     total_notes: int
-    moyenne_generale_promo: float
-    meilleure_moyenne: float
-    moins_bonne_moyenne: float
-    taux_reussite: float  # % avec moyenne >= 10
-    repartition_mentions: dict
-    top_5_seminaristes: List[dict]
+    moyenne_generale: float

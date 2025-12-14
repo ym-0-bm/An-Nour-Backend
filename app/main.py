@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 from app.config import settings
 from app.database import connect_db, disconnect_db
-from app.routes import registrations, scientific
+from app.routes import registrations, scientific, finance, admin
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -43,11 +43,21 @@ app.mount("/media", StaticFiles(directory="media"), name="media")
 # Routes
 app.include_router(registrations.router, prefix=settings.API_V1_STR)
 app.include_router(scientific.router, prefix=settings.API_V1_STR)
+app.include_router(finance.router, prefix=settings.API_V1_STR)
+app.include_router(admin.router, prefix=settings.API_V1_STR)
 
 @app.get("/")
 async def root():
-    return {"message": "Inscription System API - MongoDB", "version": "1.0.0"}
+    return {"message": "An Nour Management System API - MongoDB", "version": "1.0.0"}
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "database": "MongoDB"}
+    return {
+        "status": "healthy",
+        "database": "MongoDB",
+        "modules": {
+            "inscriptions": "active",
+            "scientifique": "active",
+            "finances": "active"
+        }
+    }
