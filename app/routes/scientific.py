@@ -2,9 +2,7 @@ from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Optional, List
 from datetime import datetime
 
-from app.models.scientific_schemas import (
-    MatiereCreate, MatiereUpdate, MatiereResponse,
-    NoteCreate, NoteUpdate, NoteResponse,
+from app.models.scientific_schemas import (NoteUpdate, NoteResponse,
     BulletinGenerate, BulletinResponse, BulletinDetail,
     StatsScientifiques
 )
@@ -24,6 +22,7 @@ async def get_seminaristes(
         search: Optional[str] = None,
         dortoir: Optional[str] = None,
         niveau: Optional[str] = None,
+        niveau_academique: Optional[str] = None,
         sexe: Optional[str] = None
         
 ):
@@ -40,6 +39,10 @@ async def get_seminaristes(
         where["sexe"] = sexe
     if dortoir:
         where["dortoir_code"] = dortoir
+    if niveau:
+        where["niveau"] = niveau
+    if niveau_academique:
+        where["niveau_academique"] = niveau_academique
 
     total = await prisma.registration.count(where=where)
 
@@ -47,14 +50,26 @@ async def get_seminaristes(
         where=where,
         skip=(page - 1) * limit,
         take=limit,
-        include={"dortoir": True}
+        include={
+            "dortoir": True,
+            "notes": {
+                "where": {"type": "TEST_ENTREE"}
+            },
+            "seminaristes": True
+        }
     )
 
     # Trier en Python
     seminaristes_sorted = sorted(seminaristes, key=lambda s: (s.nom, s.prenom))
 
-    data = [
-        {
+    data = []
+    for s in seminaristes_sorted:
+        note_entree = s.notes[0].note if s.notes else None
+        niveau = (
+            s.seminaristes[0].niveau if s.seminaristes else None
+        )
+
+        data.append({
             "id": s.id,
             "matricule": s.matricule,
             "nom": s.nom,
@@ -69,10 +84,10 @@ async def get_seminaristes(
             "allergie": s.allergie,
             "antecedent_medical": s.antecedent_medical,
             "registration_date": s.registration_date,
-            "photo_url": s.photo_url
-        }
-        for s in seminaristes_sorted
-    ]
+            "photo_url": s.photo_url,
+            "note_entree": note_entree,
+            "niveau": niveau
+        })
 
     return {
         "total": total,
@@ -83,142 +98,122 @@ async def get_seminaristes(
 
 
 # ============================================
-# MATIÈRES (CRUD)
-# ============================================
-
-@router.post("/matieres", response_model=MatiereResponse, status_code=201)
-async def create_matiere(data: MatiereCreate):
-    """Créer une matière"""
-
-    # Vérifier unicité du code
-    existing = await prisma.matiere.find_unique(where={"code": data.code})
-    if existing:
-        raise HTTPException(status_code=409, detail="Ce code matière existe déjà")
-
-    matiere = await prisma.matiere.create(data=data.model_dump())
-    return matiere
-
-
-@router.get("/matieres", response_model=List[MatiereResponse])
-async def get_matieres(active_only: bool = True):
-    """Liste des matières"""
-
-    where = {"is_active": True} if active_only else {}
-    matieres = await prisma.matiere.find_many(where=where)
-    return matieres
-
-
-@router.get("/matieres/{code}", response_model=MatiereResponse)
-async def get_matiere(code: str):
-    """Détail d'une matière"""
-
-    matiere = await prisma.matiere.find_unique(where={"code": code})
-    if not matiere:
-        raise HTTPException(status_code=404, detail="Matière non trouvée")
-    return matiere
-
-
-@router.put("/matieres/{code}", response_model=MatiereResponse)
-async def update_matiere(code: str, data: MatiereUpdate):
-    """Modifier une matière"""
-
-    existing = await prisma.matiere.find_unique(where={"code": code})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Matière non trouvée")
-
-    update_data = data.model_dump(exclude_unset=True)
-    matiere = await prisma.matiere.update(
-        where={"code": code},
-        data=update_data
-    )
-    return matiere
-
-
-@router.delete("/matieres/{code}")
-async def delete_matiere(code: str):
-    """Supprimer (désactiver) une matière"""
-
-    existing = await prisma.matiere.find_unique(where={"code": code})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Matière non trouvée")
-
-    # Soft delete
-    await prisma.matiere.update(
-        where={"code": code},
-        data={"is_active": False}
-    )
-
-    return {"message": "Matière désactivée avec succès", "code": code}
-
-
-# ============================================
 # NOTES (CRUD)
 # ============================================
 
-@router.post("/notes", response_model=NoteResponse, status_code=201)
-async def create_note(data: NoteCreate, created_by: str = "admin"):
-    """Ajouter une note"""
+@router.post("/test-entree", status_code=201)
+async def create_test_entree(
+    matricule: str,
+    note: float,
+    niveau: str,
+    created_by: str = "admin"
+):
+    """
+    Enregistrer la note du test d'entrée
+    + mettre à jour le niveau du séminariste
+    """
 
-    # Vérifier que le séminariste existe
-    seminariste = await prisma.registration.find_unique(
-        where={"matricule": data.matricule}
+    if not 0 <= note <= 20:
+        raise HTTPException(status_code=400, detail="La note doit être sur 20")
+
+    # Vérifier inscription
+    registration = await prisma.registration.find_unique(
+        where={"matricule": matricule}
     )
-    if not seminariste:
+    if not registration:
         raise HTTPException(status_code=404, detail="Séminariste non trouvé")
 
-    # Vérifier que la matière existe
-    matiere = await prisma.matiere.find_unique(where={"code": data.matiere_code})
-    if not matiere:
-        raise HTTPException(status_code=404, detail="Matière non trouvée")
+    # Vérifier ou créer seminariste
+    seminariste = await prisma.seminariste.find_unique(
+        where={"matricule": matricule}
+    )
 
-    # Créer la note
-    note = await prisma.note.create(
+    if not seminariste:
+        seminariste = await prisma.seminariste.create(
+            data={
+                "matricule": matricule,
+                "niveau": niveau
+            }
+        )
+    else:
+        # Mettre à jour le niveau
+        await prisma.seminariste.update(
+            where={"matricule": matricule},
+            data={"niveau": niveau}
+        )
+
+    # Créer la note du test d'entrée
+    note_entree = await prisma.note.create(
         data={
-            **data.model_dump(),
+            "matricule": matricule,
+            "note": note,
+            "type": "TEST_ENTREE",
+            "libelle": "Test de niveau à l'entrée",
             "created_by": created_by
         }
     )
 
-    # Récupérer avec relations
-    note_complete = await prisma.note.find_unique(
-        where={"id": note.id},
-        include={"seminariste": True, "matiere": True}
-    )
-
     return {
-        **note_complete.model_dump(),
-        "nom_seminariste": note_complete.seminariste.nom,
-        "prenom_seminariste": note_complete.seminariste.prenom,
-        "nom_matiere": note_complete.matiere.nom,
-        "coefficient": note_complete.matiere.coefficient
+        "message": "Test de niveau enregistré avec succès",
+        "matricule": matricule,
+        "note": note,
+        "niveau": niveau
     }
 
+@router.post("/notes", status_code=201)
+async def add_note_seminaire(
+    matricule: str,
+    note: float,
+    libelle: Optional[str] = None,
+    created_by: str = "admin"
+):
+    if not 0 <= note <= 20:
+        raise HTTPException(status_code=400, detail="Note invalide")
+
+    seminariste = await prisma.seminariste.find_unique(
+        where={"matricule": matricule}
+    )
+    if not seminariste:
+        raise HTTPException(status_code=404, detail="Séminariste non trouvé")
+
+    return await prisma.note.create(
+        data={
+            "matricule": matricule,
+            "note": note,
+            "type": "EVALUATION",
+            "libelle": libelle,
+            "created_by": created_by
+        }
+    )
 
 @router.get("/notes", response_model=List[NoteResponse])
 async def get_notes(
-        matricule: Optional[str] = None,
-        matiere_code: Optional[str] = None
+        matricule: Optional[str] = None
 ):
     """Liste des notes avec filtres"""
 
     where = {}
     if matricule:
         where["matricule"] = matricule
-    if matiere_code:
-        where["matiere_code"] = matiere_code
 
     notes = await prisma.note.find_many(
         where=where,
-        include={"seminariste": True, "matiere": True}
+        include={"seminariste": True}
     )
 
     return [
         {
-            **note.model_dump(),
+            "id": note.id,
+            "matricule": note.matricule,
             "nom_seminariste": note.seminariste.nom,
             "prenom_seminariste": note.seminariste.prenom,
-            "nom_matiere": note.matiere.nom,
-            "coefficient": note.matiere.coefficient
+            "note": note.note,
+            "type": note.type,
+            "libelle":note.libelle,
+            "observation": note.observation,
+            "created_by": note.created_by,
+            "created_at": note.created_at,
+            "updated_at": note.updated_at,
         }
         for note in notes
     ]
@@ -230,7 +225,7 @@ async def get_note(id: str):
 
     note = await prisma.note.find_unique(
         where={"id": id},
-        include={"seminariste": True, "matiere": True}
+        include={"seminariste": True}
     )
 
     if not note:
@@ -239,9 +234,7 @@ async def get_note(id: str):
     return {
         **note.model_dump(),
         "nom_seminariste": note.seminariste.nom,
-        "prenom_seminariste": note.seminariste.prenom,
-        "nom_matiere": note.matiere.nom,
-        "coefficient": note.matiere.coefficient
+        "prenom_seminariste": note.seminariste.prenom
     }
 
 
@@ -257,15 +250,13 @@ async def update_note(id: str, data: NoteUpdate):
     note = await prisma.note.update(
         where={"id": id},
         data=update_data,
-        include={"seminariste": True, "matiere": True}
+        include={"seminariste": True}
     )
 
     return {
         **note.model_dump(),
         "nom_seminariste": note.seminariste.nom,
-        "prenom_seminariste": note.seminariste.prenom,
-        "nom_matiere": note.matiere.nom,
-        "coefficient": note.matiere.coefficient
+        "prenom_seminariste": note.seminariste.prenom
     }
 
 
@@ -293,8 +284,7 @@ async def generate_bulletin(data: BulletinGenerate, generated_by: str = "admin")
     notes = await prisma.note.find_many(
         where={
             "matricule": data.matricule
-        },
-        include={"matiere": True}
+        }
     )
 
     if not notes:
@@ -303,9 +293,7 @@ async def generate_bulletin(data: BulletinGenerate, generated_by: str = "admin")
             detail="Aucune note trouvée pour cette période"
         )
 
-    # Calculer moyenne générale
-    total_points = sum(note.note * note.matiere.coefficient for note in notes)
-    total_coef = sum(note.matiere.coefficient for note in notes)
+
     moyenne = round(total_points / total_coef, 2) if total_coef > 0 else 0
 
     # Déterminer mention
@@ -330,7 +318,6 @@ async def generate_bulletin(data: BulletinGenerate, generated_by: str = "admin")
             "matricule": data.matricule,
             "annee_scolaire": data.annee_scolaire,
             "moyenne_generale": moyenne,
-            "total_coefficient": total_coef,
             "mention": mention,
             "observations": data.observations,
             "date_conseil": data.date_conseil,
@@ -362,8 +349,7 @@ async def get_bulletin(numero: str):
     notes = await prisma.note.find_many(
         where={
             "matricule": bulletin.matricule
-        },
-        include={"matiere": True}
+        }
     )
 
     return {
@@ -426,35 +412,17 @@ async def get_stats_scientifiques():
     """Statistiques du module scientifique"""
 
     total_seminaristes = await prisma.registration.count()
-
-    total_matieres = await prisma.matiere.count()
-
     total_notes = await prisma.note.count()
 
-    notes = await prisma.note.find_many(
-        include={"matiere": True}
+    notes = await prisma.note.find_many()
+
+    moyenne_generale = (
+        round(sum(n.note for n in notes) / len(notes), 2)
+        if notes else 0
     )
-
-    if not notes:
-        moyenne_generale = 0
-    else:
-        total_points = sum(
-            note.note * note.matiere.coefficient
-            for note in notes
-        )
-        total_coefficients = sum(
-            note.matiere.coefficient
-            for note in notes
-        )
-
-        moyenne_generale = (
-            round(total_points / total_coefficients, 2)
-            if total_coefficients > 0 else 0
-        )
 
     return {
         "total_seminaristes": total_seminaristes,
-        "total_matieres": total_matieres,
         "total_notes": total_notes,
         "moyenne_generale": moyenne_generale
     }

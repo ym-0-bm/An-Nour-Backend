@@ -302,7 +302,7 @@ async def get_registrations(
             photo_url=reg.photo_url,
             validated=reg.validated,
             registration_date=reg.registration_date,
-            commune_habitation=reg.commune_habitation,
+            commune_habitation=reg.commune_habitation
         )
         for reg in registrations_sorted
     ]

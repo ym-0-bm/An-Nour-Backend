@@ -2,52 +2,12 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
 from datetime import datetime
 
-
-# ============================================
-# MATIÈRES
-# ============================================
-
-class MatiereCreate(BaseModel):
-    code: str
-    nom: str
-    coefficient: float = 1.0
-    description: Optional[str] = None
-
-    @field_validator('coefficient')
-    @classmethod
-    def validate_coefficient(cls, v):
-        if v <= 0:
-            raise ValueError('Le coefficient doit être positif')
-        return v
-
-
-class MatiereUpdate(BaseModel):
-    nom: Optional[str] = None
-    coefficient: Optional[float] = None
-    description: Optional[str] = None
-    is_active: Optional[bool] = None
-
-
-class MatiereResponse(BaseModel):
-    id: str
-    code: str
-    nom: str
-    coefficient: float
-    description: Optional[str]
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
 # ============================================
 # NOTES
 # ============================================
 
 class NoteCreate(BaseModel):
     matricule: str
-    matiere_code: str
     note: float
     type_evaluation: str  # "Devoir", "Composition", "Examen"
     observation: Optional[str] = None
@@ -77,15 +37,13 @@ class NoteResponse(BaseModel):
     matricule: str
     nom_seminariste: Optional[str] = None
     prenom_seminariste: Optional[str] = None
-    matiere_code: str
-    nom_matiere: Optional[str] = None
-    coefficient: Optional[float] = None
     note: float
-    type_evaluation: str
+    type: str
+    libelle: str
     observation: Optional[str]
     created_by: str
     created_at: datetime
-    updated_at: datetime
+    updated_at: Optional[datetime]
 
     model_config = {"from_attributes": True}
 
@@ -135,6 +93,5 @@ class BulletinDetail(BaseModel):
 
 class StatsScientifiques(BaseModel):
     total_seminaristes: int
-    total_matieres : int
     total_notes: int
     moyenne_generale: float

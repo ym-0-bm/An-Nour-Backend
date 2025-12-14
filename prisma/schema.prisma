@@ -55,9 +55,9 @@ model Registration {
   contact_parent      String
   contact_seminariste String?
 
-  notes     Note[]
   bulletins Bulletin[]
   seminaristes Seminariste[]
+  notes        Note[]
 
   @@map("registrations")
 }
@@ -70,39 +70,24 @@ model Seminariste {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
   matricule   String   @unique
   registration Registration @relation(fields: [matricule], references: [matricule])
-  niveau      String?
+  niveau       String?   // NIVEAU DU SÉMINAIRE
 
   @@map("seminaristes")
 }
 
-model Matiere {
-  id          String   @id @default(auto()) @map("_id") @db.ObjectId
-  code        String   @unique
-  nom         String
-  coefficient Float    @default(1)
-  description String?
-  is_active   Boolean  @default(true)
-  created_at  DateTime @default(now())
-  updated_at  DateTime @updatedAt
-  
-  notes       Note[]
-
-  @@map("matieres")
-}
-
 model Note {
-  id              String       @id @default(auto()) @map("_id") @db.ObjectId
-  matricule       String
-  seminariste     Registration @relation(fields: [matricule], references: [matricule])
-  matiere_code    String
-  matiere         Matiere      @relation(fields: [matiere_code], references: [code])
-  note            Float        // Note sur 20
-  type_evaluation String       // "Devoir", "Composition", "Examen"
-  observation     String?
-  created_by      String       // ID du professeur/admin
-  created_at      DateTime     @default(now())
-  updated_at      DateTime     @updatedAt
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  matricule     String
+  seminariste   Registration @relation(fields: [matricule], references: [matricule])
 
+  note          Float    // sur 20
+  observation   String?
+  type          String?   // "TEST_ENTREE", "EVALUATION", "SUIVI"
+  libelle       String?  // ex: "Test de niveau", "Evaluation jour 3"
+
+  created_at    DateTime @default(now())
+  updated_at    DateTime? @default(now())
+  created_by    String
 
   @@map("notes")
 }
