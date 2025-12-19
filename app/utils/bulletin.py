@@ -22,22 +22,38 @@ def get_mention(moyenne: float) -> str:
     return "Insuffisant"
 
 
-async def calculer_rangs():
-    registrations = await prisma.registration.find_many()
+async def calculer_rangs(niveau: str = None):
+    """
+    Calculer les rangs des séminaristes.
+    Si niveau est fourni, le classement est fait uniquement parmi les séminaristes de ce niveau.
+    """
+    
+    # Si un niveau est spécifié, récupérer uniquement les séminaristes de ce niveau
+    if niveau:
+        seminaristes = await prisma.seminariste.find_many(
+            where={"niveau": niveau}
+        )
+        matricules = [s.matricule for s in seminaristes]
+        
+        if not matricules:
+            return {}, 0
+    else:
+        # Sinon récupérer tous les séminaristes enregistrés
+        registrations = await prisma.registration.find_many()
+        matricules = [r.matricule for r in registrations]
 
     resultats = []
 
-    for r in registrations:
+    for matricule in matricules:
         notes = await prisma.note.find_many(
             where={
-                "matricule": r.matricule,
-                "type": {"not": "TEST_ENTREE"}
+                "matricule": matricule
             }
         )
 
         moyenne = calculer_moyenne(notes)
         resultats.append({
-            "matricule": r.matricule,
+            "matricule": matricule,
             "moyenne": moyenne
         })
 

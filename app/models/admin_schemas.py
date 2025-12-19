@@ -204,3 +204,53 @@ class ListePDFGenerate(BaseModel):
     filters: Optional[dict] = None  # niveau, dortoir, sexe
     include_photos: bool = False
     sort_by: str = "nom"  # "nom", "matricule", "dortoir"
+
+
+# ============================================
+# GESTION MEMBRES CO (Comité d'Organisation)
+# ============================================
+
+class MembreCOCreate(BaseModel):
+    """Schéma pour créer un nouveau membre du CO"""
+    nom: str
+    prenoms: str
+    contact: str
+    commission: str  # Ex: "Logistique", "Communication", "Scientifique"
+    statut: str  # Ex: "Membre", "Responsable"
+    photo_url: Optional[str] = None
+    allergies: Optional[str] = "RAS"
+    antecedent_medical: Optional[str] = "Néant"
+
+
+class MembreCOUpdate(BaseModel):
+    """Schéma pour mettre à jour un membre du CO"""
+    nom: Optional[str] = None
+    prenoms: Optional[str] = None
+    contact: Optional[str] = None
+    commission: Optional[str] = None
+    statut: Optional[str] = None
+    photo_url: Optional[str] = None
+    allergies: Optional[str] = None
+    antecedent_medical: Optional[str] = None
+
+
+class MembreCOResponse(BaseModel):
+    """Schéma de réponse pour un membre du CO"""
+    id: str
+    nom: str
+    prenoms: str
+    contact: str
+    commission: str
+    statut: str
+    photo_url: Optional[str]
+    allergies: Optional[str]
+    antecedent_medical: Optional[str]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class MembreCOListResponse(BaseModel):
+    """Schéma de réponse pour la liste des membres du CO"""
+    total: int
+    data: List[MembreCOResponse]

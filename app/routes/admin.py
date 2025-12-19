@@ -8,7 +8,8 @@ from app.models.admin_schemas import (
     UserLogin, UserCreate, UserUpdate, UserResponse, Token,
     SeminaristeCreate, SeminaristeUpdate, SeminaristeResponse,
     DashboardStats, ImportResult, ExportParams,
-    BadgeGenerate, DiplomeGenerate, ListePDFGenerate
+    BadgeGenerate, DiplomeGenerate, ListePDFGenerate,
+    MembreCOCreate, MembreCOUpdate, MembreCOResponse, MembreCOListResponse
 )
 from app.database import prisma
 from app.utils.auth import (
@@ -457,4 +458,182 @@ async def get_static_metadata():
         "niveaux_academiques": niveaux_academiques,
         "communes": communes_ci,
         "dortoirs": dortoirs
+    }
+
+
+# ============================================
+# GESTION MEMBRES CO (Comité d'Organisation)
+# ============================================
+
+@router.post("/membres-co", response_model=MembreCOResponse, status_code=201)
+async def create_membre_co(data: MembreCOCreate):
+    """
+    Créer un nouveau membre du Comité d'Organisation
+    
+    - **nom**: Nom du membre
+    - **prenoms**: Prénoms du membre
+    - **contact**: Numéro de téléphone ou email
+    - **commission**: Commission assignée (Logistique, Communication, Scientifique, etc.)
+    - **statut**: Statut du membre (Actif, Inactif, Responsable)
+    - **photo_url**: URL de la photo (optionnel)
+    - **allergies**: Allergies connues (optionnel, défaut: RAS)
+    - **antecedent_medical**: Antécédents médicaux (optionnel, défaut: Néant)
+    """
+    
+    # Créer le membre CO dans la base de données
+    membre = await prisma.membreco.create(
+        data={
+            "nom": data.nom.upper(),
+            "prenoms": data.prenoms.title(),
+            "contact": data.contact,
+            "commission": data.commission,
+            "statut": data.statut,
+            "photo_url": data.photo_url,
+            "allergies": data.allergies or "RAS",
+            "antecedent_medical": data.antecedent_medical or "Néant"
+        }
+    )
+    
+    return MembreCOResponse(
+        id=membre.id,
+        nom=membre.nom,
+        prenoms=membre.prenoms,
+        contact=membre.contact,
+        commission=membre.commission,
+        statut=membre.statut,
+        photo_url=membre.photo_url,
+        allergies=membre.allergies,
+        antecedent_medical=membre.antecedent_medical,
+        created_at=membre.created_at
+    )
+
+
+@router.get("/membres-co", response_model=MembreCOListResponse)
+async def get_membres_co(
+    commission: Optional[str] = None,
+    statut: Optional[str] = None
+):
+    """
+    Récupérer la liste de tous les membres du CO
+    
+    - **commission**: Filtrer par commission (optionnel)
+    - **statut**: Filtrer par statut (optionnel)
+    """
+    
+    # Construire le filtre
+    where = {}
+    if commission:
+        where["commission"] = commission
+    if statut:
+        where["statut"] = statut
+    
+    # Récupérer tous les membres du CO
+    membres = await prisma.membreco.find_many(where=where)
+    
+    # Trier par commission puis nom
+    membres_sorted = sorted(membres, key=lambda m: (m.commission, m.nom, m.prenoms))
+    
+    # Formater la réponse
+    data = [
+        MembreCOResponse(
+            id=m.id,
+            nom=m.nom,
+            prenoms=m.prenoms,
+            contact=m.contact,
+            commission=m.commission,
+            statut=m.statut,
+            photo_url=m.photo_url,
+            allergies=m.allergies,
+            antecedent_medical=m.antecedent_medical,
+            created_at=m.created_at
+        )
+        for m in membres_sorted
+    ]
+    
+    return MembreCOListResponse(
+        total=len(data),
+        data=data
+    )
+
+
+@router.get("/membres-co/{membre_id}", response_model=MembreCOResponse)
+async def get_membre_co(membre_id: str):
+    """
+    Récupérer un membre du CO par son ID
+    """
+    
+    membre = await prisma.membreco.find_unique(where={"id": membre_id})
+    
+    if not membre:
+        raise HTTPException(status_code=404, detail="Membre du CO non trouvé")
+    
+    return MembreCOResponse(
+        id=membre.id,
+        nom=membre.nom,
+        prenoms=membre.prenoms,
+        contact=membre.contact,
+        commission=membre.commission,
+        statut=membre.statut,
+        photo_url=membre.photo_url,
+        allergies=membre.allergies,
+        antecedent_medical=membre.antecedent_medical,
+        created_at=membre.created_at
+    )
+
+
+@router.put("/membres-co/{membre_id}", response_model=MembreCOResponse)
+async def update_membre_co(membre_id: str, data: MembreCOUpdate):
+    """
+    Mettre à jour un membre du CO
+    """
+    
+    existing = await prisma.membreco.find_unique(where={"id": membre_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Membre du CO non trouvé")
+    
+    update_data = data.model_dump(exclude_unset=True)
+    
+    # Formater les noms si fournis
+    if "nom" in update_data:
+        update_data["nom"] = update_data["nom"].upper()
+    if "prenoms" in update_data:
+        update_data["prenoms"] = update_data["prenoms"].title()
+    
+    membre = await prisma.membreco.update(
+        where={"id": membre_id},
+        data=update_data
+    )
+    
+    return MembreCOResponse(
+        id=membre.id,
+        nom=membre.nom,
+        prenoms=membre.prenoms,
+        contact=membre.contact,
+        commission=membre.commission,
+        statut=membre.statut,
+        photo_url=membre.photo_url,
+        allergies=membre.allergies,
+        antecedent_medical=membre.antecedent_medical,
+        created_at=membre.created_at
+    )
+
+
+@router.delete("/membres-co/{membre_id}")
+async def delete_membre_co(membre_id: str):
+    """
+    Supprimer un membre du CO
+    """
+    
+    membre = await prisma.membreco.find_unique(where={"id": membre_id})
+    
+    if not membre:
+        raise HTTPException(status_code=404, detail="Membre du CO non trouvé")
+    
+    await prisma.membreco.delete(where={"id": membre_id})
+    
+    return {
+        "message": "Membre du CO supprimé avec succès",
+        "deleted_id": membre_id,
+        "nom": membre.nom,
+        "prenoms": membre.prenoms
     }

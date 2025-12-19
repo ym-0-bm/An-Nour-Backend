@@ -64,6 +64,8 @@ class BulletinResponse(BaseModel):
     matricule: str
     nom_seminariste: Optional[str] = None
     prenom_seminariste: Optional[str] = None
+    niveau: Optional[str] = None  # Niveau du séminaire (ex: Niveau 1, Niveau 2)
+    niveau_academique: Optional[str] = None  # Niveau scolaire (ex: 6ème, Terminale)
     annee_scolaire: str
     moyenne_generale: float
     total_coefficient: float

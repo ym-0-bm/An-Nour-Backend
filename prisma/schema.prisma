@@ -195,6 +195,22 @@ model Formateur {
   @@map("formateurs")
 }
 
+model MembreCO {
+  id                 String   @id @default(auto()) @map("_id") @db.ObjectId
+  nom                String
+  prenoms            String
+  contact            String
+  commission         String   // Ex: "Logistique", "Communication", "Scientifique", etc.
+  statut             String   // Ex: "Membre", "Responsable"
+  photo_url          String?
+  allergies          String?  @default("RAS")
+  antecedent_medical String?  @default("Néant")
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  @@map("membres_co")
+}
+
 // ============================================
 // SYSTÈME D'AUTHENTIFICATION 
 // ============================================

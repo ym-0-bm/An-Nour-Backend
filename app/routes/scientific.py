@@ -316,47 +316,89 @@ async def delete_note(id: str):
 @router.post("/bulletins/generate", response_model=BulletinResponse, status_code=201)
 async def generate_bulletin(data: BulletinGenerate, generated_by: str = "scientifique"):
 
+    # Récupérer le séminariste avec ses informations
+    registration = await prisma.registration.find_unique(
+        where={"matricule": data.matricule}
+    )
+    
+    if not registration:
+        raise HTTPException(
+            status_code=404,
+            detail="Séminariste non trouvé"
+        )
+    
+    # Récupérer le niveau du séminaire depuis la table seminariste
+    seminariste_info = await prisma.seminariste.find_unique(
+        where={"matricule": data.matricule}
+    )
+    
+    niveau = seminariste_info.niveau if seminariste_info else None
+
     notes = await prisma.note.find_many(
         where={
-            "matricule": data.matricule,
-            "type": {"not": "TEST_ENTREE"}
+            "matricule": data.matricule
         }
     )
 
     if not notes:
         raise HTTPException(
             status_code=404,
-            detail="Aucune note d’évaluation trouvée"
+            detail="Aucune note d'évaluation trouvée"
         )
 
     moyenne = calculer_moyenne(notes)
     mention = get_mention(moyenne)
 
-    rangs, effectif = await calculer_rangs()
+    # Calculer le rang parmi les séminaristes du même niveau
+    rangs, effectif = await calculer_rangs(niveau)
     rang = rangs.get(data.matricule)
 
     numero = f"BUL-{data.matricule}-{data.annee_scolaire}".replace(" ", "")
 
-    bulletin = await prisma.bulletin.create(
-        data={
-            "numero": numero,
-            "matricule": data.matricule,
-            "annee_scolaire": data.annee_scolaire,
-            "moyenne_generale": moyenne,
-            "total_coefficient": len(notes),
-            "rang": rang,
-            "effectif_classe": effectif,
-            "mention": mention,
-            "observations": data.observations,
-            "generated_by": generated_by
-        },
-        include={"seminariste": True}
+    # Vérifier si un bulletin existe déjà pour ce séminariste et cette année
+    existing_bulletin = await prisma.bulletin.find_unique(
+        where={"numero": numero}
     )
+
+    if existing_bulletin:
+        # Mettre à jour le bulletin existant
+        bulletin = await prisma.bulletin.update(
+            where={"numero": numero},
+            data={
+                "moyenne_generale": moyenne,
+                "total_coefficient": len(notes),
+                "rang": rang,
+                "effectif_classe": effectif,
+                "mention": mention,
+                "observations": data.observations,
+                "generated_by": generated_by
+            },
+            include={"seminariste": True}
+        )
+    else:
+        # Créer un nouveau bulletin
+        bulletin = await prisma.bulletin.create(
+            data={
+                "numero": numero,
+                "matricule": data.matricule,
+                "annee_scolaire": data.annee_scolaire,
+                "moyenne_generale": moyenne,
+                "total_coefficient": len(notes),
+                "rang": rang,
+                "effectif_classe": effectif,
+                "mention": mention,
+                "observations": data.observations,
+                "generated_by": generated_by
+            },
+            include={"seminariste": True}
+        )
 
     return {
         **bulletin.model_dump(),
         "nom_seminariste": bulletin.seminariste.nom,
-        "prenom_seminariste": bulletin.seminariste.prenom
+        "prenom_seminariste": bulletin.seminariste.prenom,
+        "niveau": niveau,
+        "niveau_academique": registration.niveau_academique
     }
 
 
