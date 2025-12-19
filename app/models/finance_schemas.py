@@ -60,13 +60,44 @@ class TransactionDelete(BaseModel):
         return v
 
 
+# ============================================
+# SORTIES (SCHÉMAS SIMPLIFIÉS)
+# ============================================
+
+class SortieCreate(BaseModel):
+    """Schéma simplifié pour créer une sortie (dépense)"""
+    categorie: Optional[str] = None  # Ex: "Achat matériel", "Transport", "Nourriture", "Salaires"
+    montant: float  
+    libelle: str  # Description courte
+    beneficiaire: Optional[str] = None  # Qui reçoit le paiement
+    mode_paiement: str = "Espèces"  # Wave, Espèces, Virement
+    date_transaction: Optional[datetime] = None  # Défaut: maintenant
+
+    @field_validator('montant')
+    @classmethod
+    def validate_montant(cls, v):
+        if v <= 0:
+            raise ValueError('Le montant doit être positif')
+        return v
+
+
+class SortieUpdate(BaseModel):
+    """Schéma simplifié pour modifier une sortie"""
+    categorie: Optional[str] = None
+    montant: Optional[float] = None
+    libelle: Optional[str] = None
+    beneficiaire: Optional[str] = None
+    mode_paiement: Optional[str] = None
+    date_transaction: Optional[datetime] = None
+
+
 class TransactionResponse(BaseModel):
     id: str
     reference: str
     type: str
     categorie: str
     montant: float
-    devise: str
+    devise: Optional[str] = "FCFA"
     libelle: str
     description: Optional[str]
     beneficiaire: Optional[str]
@@ -154,28 +185,6 @@ class RapportDetail(BaseModel):
     transactions_sorties: List[TransactionResponse]
     repartition_categories: dict
 
-
-# ============================================
-# STATISTIQUES FINANCIÈRES
-# ============================================
-
-class StatsFinancieres(BaseModel):
-    periode_debut: datetime
-    periode_fin: datetime
-    total_entrees: float
-    total_sorties: float
-    solde: float
-    nb_transactions_entrees: int
-    nb_transactions_sorties: int
-    moyenne_entree: float
-    moyenne_sortie: float
-    plus_grosse_entree: Optional[TransactionResponse]
-    plus_grosse_sortie: Optional[TransactionResponse]
-    repartition_categories_entrees: dict
-    repartition_categories_sorties: dict
-    evolution_mensuelle: List[dict]
-
-
 # ============================================
 # LISTE PAGINÉE
 # ============================================
@@ -188,3 +197,76 @@ class PaginatedTransactions(BaseModel):
     total_entrees: float
     total_sorties: float
     solde_periode: float
+
+
+# ============================================
+# ENTRÉES SIMPLIFIÉES
+# ============================================
+
+class EntreeDonCreate(BaseModel):
+    """Schéma simplifié pour ajouter un don"""
+    montant: float
+    donateur: str
+    description: Optional[str] = None
+    mode_paiement: str = "Wave"
+    date_transaction: Optional[datetime] = None
+
+    @field_validator('montant')
+    @classmethod
+    def validate_montant(cls, v):
+        if v <= 0:
+            raise ValueError('Le montant doit être positif')
+        return v
+
+
+class EntreeVenteCreate(BaseModel):
+    """Schéma simplifié pour ajouter une vente"""
+    montant: float
+    libelle: str
+    description: Optional[str] = None
+    mode_paiement: str = "Espèces"
+    date_transaction: Optional[datetime] = None
+
+    @field_validator('montant')
+    @classmethod
+    def validate_montant(cls, v):
+        if v <= 0:
+            raise ValueError('Le montant doit être positif')
+        return v
+
+
+# ============================================
+# DASHBOARD FINANCE
+# ============================================
+
+class DashboardFinance(BaseModel):
+    """Données pour le tableau de bord financier"""
+    # Totaux par catégorie d'entrée
+    inscriptions: dict  # {"count": int, "montant": float}
+    dons: dict  # {"count": int, "montant": float}
+    ventes: dict  # {"count": int, "montant": float}
+    autres_entrees: dict  # {"count": int, "montant": float}
+    
+    # Total des sorties
+    sorties: dict  # {"count": int, "montant": float}
+    
+    # Solde global
+    total_entrees: float
+    total_sorties: float
+    solde: float
+    
+    # Transactions récentes
+    transactions_recentes: List[dict]
+    
+    # Répartition pour graphiques
+    repartition_entrees: dict  # {"Inscription": x, "Don": y, "Vente": z, ...}
+    repartition_sorties: dict  # Par catégorie de sortie
+
+
+class PaginatedEntrees(BaseModel):
+    """Liste paginée des entrées"""
+    total: int
+    page: int
+    limit: int
+    data: List[TransactionResponse]
+    total_montant: float

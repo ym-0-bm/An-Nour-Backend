@@ -212,6 +212,20 @@ model MembreCO {
 }
 
 // ============================================
+// MODULE VISITEURS
+// ============================================
+
+model Visiteur {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  nom        String
+  prenom     String
+  contact    String
+  created_at DateTime @default(now())
+
+  @@map("visiteurs")
+}
+
+// ============================================
 // SYSTÈME D'AUTHENTIFICATION 
 // ============================================
 

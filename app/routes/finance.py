@@ -6,9 +6,12 @@ import uuid
 from app.models.finance_schemas import (
     TransactionCreate, TransactionUpdate, TransactionDelete, TransactionResponse,
     AuditLogResponse, RapportGenerate, RapportResponse, RapportDetail,
-    StatsFinancieres, PaginatedTransactions
+    PaginatedTransactions,
+    EntreeDonCreate, EntreeVenteCreate, DashboardFinance, PaginatedEntrees,
+    SortieCreate, SortieUpdate
 )
 from app.database import prisma
+from app.utils.finance_utils import generate_reference, create_inscription_entry
 
 router = APIRouter(prefix="/finances", tags=["Module Finances"])
 
@@ -42,42 +45,236 @@ async def create_audit_log(
     )
 
 
-def generate_reference(type: str) -> str:
-    """Générer référence unique transaction"""
-    prefix = "ENT" if type == "ENTREE" else "SOR"
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    unique = str(uuid.uuid4())[:8].upper()
-    return f"{prefix}-{timestamp}-{unique}"
+# ============================================
+# ENTRÉES - DONS
+# ============================================
+
+@router.post("/entrees/don", response_model=TransactionResponse, status_code=201)
+async def create_entree_don(
+    data: EntreeDonCreate,
+    created_by: str = "admin",
+    request: Request = None
+):
+    """
+    Ajouter une entrée de type Don
+    
+    - **montant**: Montant du don en FCFA
+    - **donateur**: Nom du donateur
+    - **description**: Description optionnelle
+    - **mode_paiement**: Mode de paiement (Wave, Espèces, etc.)
+    """
+    
+    reference = generate_reference("ENTREE")
+    date = data.date_transaction or datetime.now()
+    
+    transaction = await prisma.transaction.create(
+        data={
+            "reference": reference,
+            "type": "ENTREE",
+            "categorie": "Don",
+            "montant": data.montant,
+            "libelle": f"Don de {data.donateur}",
+            "description": data.description,
+            "payeur": data.donateur,
+            "mode_paiement": data.mode_paiement,
+            "date_transaction": date,
+            "created_by": created_by,
+            "statut": "validee"
+        }
+    )
+    
+    # Audit log
+    ip = request.client.host if request else None
+    user_agent = request.headers.get("user-agent") if request else None
+    
+    await create_audit_log(
+        transaction_id=transaction.id,
+        action="CREATE",
+        modified_by=created_by,
+        ip_address=ip,
+        user_agent=user_agent
+    )
+    
+    return transaction
 
 
 # ============================================
-# TRANSACTIONS (CRUD avec traçabilité)
+# ENTRÉES - VENTES
 # ============================================
 
-@router.post("/transactions", response_model=TransactionResponse, status_code=201)
-async def create_transaction(
-        data: TransactionCreate,
+@router.post("/entrees/vente", response_model=TransactionResponse, status_code=201)
+async def create_entree_vente(
+    data: EntreeVenteCreate,
+    created_by: str = "admin",
+    request: Request = None
+):
+    """
+    Ajouter une entrée de type Vente
+    
+    - **montant**: Montant de la vente en FCFA
+    - **libelle**: Description de la vente
+    - **description**: Détails supplémentaires optionnels
+    - **mode_paiement**: Mode de paiement (Espèces, Wave, etc.)
+    """
+    
+    reference = generate_reference("ENTREE")
+    date = data.date_transaction or datetime.now()
+    
+    transaction = await prisma.transaction.create(
+        data={
+            "reference": reference,
+            "type": "ENTREE",
+            "categorie": "Vente",
+            "montant": data.montant,
+            "libelle": data.libelle,
+            "description": data.description,
+            "mode_paiement": data.mode_paiement,
+            "date_transaction": date,
+            "created_by": created_by,
+            "statut": "validee"
+        }
+    )
+    
+    # Audit log
+    ip = request.client.host if request else None
+    user_agent = request.headers.get("user-agent") if request else None
+    
+    await create_audit_log(
+        transaction_id=transaction.id,
+        action="CREATE",
+        modified_by=created_by,
+        ip_address=ip,
+        user_agent=user_agent
+    )
+    
+    return transaction
+
+
+# ============================================
+# ENTRÉES - LISTE
+# ============================================
+
+@router.get("/entrees", response_model=PaginatedEntrees)
+async def get_entrees(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    categorie: Optional[str] = Query(None, description="Filtrer par catégorie: Inscription, Don, Vente")
+):
+    """
+    Lister toutes les entrées (recettes)
+    
+    - **categorie**: Filtrer par Inscription, Don, Vente, ou autre
+    """
+    
+    where = {
+        "type": "ENTREE",
+        "is_deleted": False
+    }
+    
+    if categorie:
+        where["categorie"] = categorie
+    
+    total = await prisma.transaction.count(where=where)
+    
+    skip = (page - 1) * limit
+    transactions = await prisma.transaction.find_many(
+        where=where,
+        skip=skip,
+        take=limit
+    )
+    
+    # Trier par date (plus récent en premier)
+    transactions_sorted = sorted(
+        transactions,
+        key=lambda t: t.date_transaction,
+        reverse=True
+    )
+    
+    # Enrichir avec noms séminaristes
+    data = []
+    for t in transactions_sorted:
+        transaction_dict = t.model_dump()
+        if t.matricule:
+            seminariste = await prisma.registration.find_unique(
+                where={"matricule": t.matricule}
+            )
+            if seminariste:
+                transaction_dict["nom_seminariste"] = f"{seminariste.nom} {seminariste.prenom}"
+        data.append(transaction_dict)
+    
+    # Calculer total montant
+    all_entrees = await prisma.transaction.find_many(where=where)
+    total_montant = sum(t.montant for t in all_entrees)
+    
+    return {
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "data": data,
+        "total_montant": total_montant
+    }
+
+
+@router.get("/entrees/{reference}", response_model=TransactionResponse)
+async def get_entree(reference: str):
+    """Détail d'une entrée"""
+
+    transaction = await prisma.transaction.find_unique(
+        where={"reference": reference}
+    )
+
+    if not transaction or transaction.type != "ENTREE":
+        raise HTTPException(status_code=404, detail="Entrée non trouvée")
+
+    result = transaction.model_dump()
+
+    # Enrichir avec nom séminariste
+    if transaction.matricule:
+        seminariste = await prisma.registration.find_unique(
+            where={"matricule": transaction.matricule}
+        )
+        if seminariste:
+            result["nom_seminariste"] = f"{seminariste.nom} {seminariste.prenom}"
+
+    return result
+
+
+# ============================================
+# SORTIES - CRÉATION
+# ============================================
+
+@router.post("/sorties", response_model=TransactionResponse, status_code=201)
+async def create_sortie(
+        data: SortieCreate,
         created_by: str = "admin",
         request: Request = None
 ):
-    """Créer une transaction"""
-
-    # Si lié à un séminariste, vérifier qu'il existe
-    if data.matricule:
-        seminariste = await prisma.registration.find_unique(
-            where={"matricule": data.matricule}
-        )
-        if not seminariste:
-            raise HTTPException(status_code=404, detail="Séminariste non trouvé")
+    """
+    Créer une sortie (dépense)
+    
+    - **categorie**: Catégorie de dépense (Achat matériel, Transport, Nourriture, Salaires, etc.)
+    - **montant**: Montant de la dépense en FCFA
+    - **libelle**: Description courte
+    - **beneficiaire**: Bénéficiaire du paiement (optionnel)
+    - **mode_paiement**: Mode de paiement (défaut: Espèces)
+    - **date_transaction**: Date de la transaction (défaut: maintenant)
+    """
 
     # Générer référence unique
-    reference = generate_reference(data.type)
+    reference = generate_reference("SORTIE")
+    date = data.date_transaction or datetime.now()
 
     # Créer transaction
     transaction = await prisma.transaction.create(
         data={
-            **data.model_dump(),
             "reference": reference,
+            "type": "SORTIE",
+            "categorie": data.categorie,
+            "montant": data.montant,
+            "libelle": data.libelle,
+            "beneficiaire": data.beneficiaire,
+            "mode_paiement": data.mode_paiement,
+            "date_transaction": date,
             "created_by": created_by,
             "statut": "validee"
         }
@@ -95,50 +292,31 @@ async def create_transaction(
         user_agent=user_agent
     )
 
-    # Récupérer avec relations si matricule
-    if data.matricule:
-        transaction_complete = await prisma.transaction.find_unique(
-            where={"id": transaction.id}
-        )
-        seminariste = await prisma.registration.find_unique(
-            where={"matricule": data.matricule}
-        )
-        return {
-            **transaction_complete.model_dump(),
-            "nom_seminariste": f"{seminariste.nom} {seminariste.prenom}"
-        }
-
     return transaction
 
 
-@router.get("/transactions", response_model=PaginatedTransactions)
-async def get_transactions(
+# ============================================
+# SORTIES - LISTE
+# ============================================
+
+@router.get("/sorties", response_model=PaginatedTransactions)
+async def get_sorties(
         page: int = Query(1, ge=1),
         limit: int = Query(20, ge=1, le=100),
-        type: Optional[str] = None,
         categorie: Optional[str] = None,
-        statut: Optional[str] = None,
         date_debut: Optional[datetime] = None,
         date_fin: Optional[datetime] = None,
-        search: Optional[str] = None,
-        include_deleted: bool = False
+        search: Optional[str] = None
 ):
-    """Liste paginée des transactions avec filtres"""
+    """Liste paginée des sorties (dépenses)"""
 
-    where = {}
-
-    # Filtrer transactions supprimées
-    if not include_deleted:
-        where["is_deleted"] = False
-
-    if type:
-        where["type"] = type
+    where = {
+        "type": "SORTIE",
+        "is_deleted": False
+    }
 
     if categorie:
         where["categorie"] = categorie
-
-    if statut:
-        where["statut"] = statut
 
     if date_debut and date_fin:
         where["date_transaction"] = {
@@ -155,7 +333,6 @@ async def get_transactions(
             {"reference": {"contains": search, "mode": "insensitive"}},
             {"libelle": {"contains": search, "mode": "insensitive"}},
             {"beneficiaire": {"contains": search, "mode": "insensitive"}},
-            {"payeur": {"contains": search, "mode": "insensitive"}},
         ]
 
     # Compter total
@@ -188,32 +365,31 @@ async def get_transactions(
                 transaction_dict["nom_seminariste"] = f"{seminariste.nom} {seminariste.prenom}"
         data.append(transaction_dict)
 
-    # Calculer totaux période
-    all_transactions = await prisma.transaction.find_many(where=where)
-    total_entrees = sum(t.montant for t in all_transactions if t.type == "ENTREE" and not t.is_deleted)
-    total_sorties = sum(t.montant for t in all_transactions if t.type == "SORTIE" and not t.is_deleted)
+    # Calculer totaux
+    all_sorties = await prisma.transaction.find_many(where=where)
+    total_sorties = sum(t.montant for t in all_sorties)
 
     return {
         "total": total,
         "page": page,
         "limit": limit,
         "data": data,
-        "total_entrees": total_entrees,
+        "total_entrees": 0,
         "total_sorties": total_sorties,
-        "solde_periode": total_entrees - total_sorties
+        "solde_periode": -total_sorties
     }
 
 
-@router.get("/transactions/{reference}", response_model=TransactionResponse)
-async def get_transaction(reference: str):
-    """Détail d'une transaction"""
+@router.get("/sorties/{reference}", response_model=TransactionResponse)
+async def get_sortie(reference: str):
+    """Détail d'une sortie"""
 
     transaction = await prisma.transaction.find_unique(
         where={"reference": reference}
     )
 
-    if not transaction:
-        raise HTTPException(status_code=404, detail="Transaction non trouvée")
+    if not transaction or transaction.type != "SORTIE":
+        raise HTTPException(status_code=404, detail="Sortie non trouvée")
 
     result = transaction.model_dump()
 
@@ -228,26 +404,26 @@ async def get_transaction(reference: str):
     return result
 
 
-@router.put("/transactions/{reference}", response_model=TransactionResponse)
-async def update_transaction(
+@router.put("/sorties/{reference}", response_model=TransactionResponse)
+async def update_sortie(
         reference: str,
-        data: TransactionUpdate,
+        data: SortieUpdate,
         modified_by: str = "admin",
         request: Request = None
 ):
-    """Modifier une transaction (avec audit log)"""
+    """Modifier une sortie"""
 
     existing = await prisma.transaction.find_unique(
         where={"reference": reference}
     )
 
-    if not existing:
-        raise HTTPException(status_code=404, detail="Transaction non trouvée")
+    if not existing or existing.type != "SORTIE":
+        raise HTTPException(status_code=404, detail="Sortie non trouvée")
 
     if existing.is_deleted:
         raise HTTPException(
             status_code=400,
-            detail="Impossible de modifier une transaction supprimée"
+            detail="Impossible de modifier une sortie supprimée"
         )
 
     # Récupérer infos pour audit
@@ -289,26 +465,26 @@ async def update_transaction(
     return result
 
 
-@router.delete("/transactions/{reference}")
-async def delete_transaction(
+@router.delete("/sorties/{reference}")
+async def delete_sortie(
         reference: str,
         data: TransactionDelete,
         deleted_by: str = "admin",
         request: Request = None
 ):
-    """Supprimer (soft delete) une transaction"""
+    """Supprimer (soft delete) une sortie"""
 
     existing = await prisma.transaction.find_unique(
         where={"reference": reference}
     )
 
-    if not existing:
-        raise HTTPException(status_code=404, detail="Transaction non trouvée")
+    if not existing or existing.type != "SORTIE":
+        raise HTTPException(status_code=404, detail="Sortie non trouvée")
 
     if existing.is_deleted:
         raise HTTPException(
             status_code=400,
-            detail="Transaction déjà supprimée"
+            detail="Sortie déjà supprimée"
         )
 
     # Soft delete
@@ -336,74 +512,24 @@ async def delete_transaction(
     )
 
     return {
-        "message": "Transaction supprimée avec succès",
+        "message": "Sortie supprimée avec succès",
         "reference": reference,
         "deleted_at": transaction.deleted_at
     }
 
 
-@router.post("/transactions/{reference}/restore")
-async def restore_transaction(
-        reference: str,
-        restored_by: str = "admin",
-        request: Request = None
-):
-    """Restaurer une transaction supprimée"""
-
-    existing = await prisma.transaction.find_unique(
-        where={"reference": reference}
-    )
-
-    if not existing:
-        raise HTTPException(status_code=404, detail="Transaction non trouvée")
-
-    if not existing.is_deleted:
-        raise HTTPException(
-            status_code=400,
-            detail="Transaction non supprimée"
-        )
-
-    # Restaurer
-    transaction = await prisma.transaction.update(
-        where={"reference": reference},
-        data={
-            "is_deleted": False,
-            "deleted_at": None,
-            "deleted_by": None,
-            "deleted_reason": None
-        }
-    )
-
-    # Créer audit log
-    ip = request.client.host if request else None
-    user_agent = request.headers.get("user-agent") if request else None
-
-    await create_audit_log(
-        transaction_id=existing.id,
-        action="RESTORE",
-        modified_by=restored_by,
-        ip_address=ip,
-        user_agent=user_agent
-    )
-
-    return {
-        "message": "Transaction restaurée avec succès",
-        "reference": reference
-    }
-
-
 # ============================================
-# TRANSACTIONS SUPPRIMÉES
+# SORTIES SUPPRIMÉES
 # ============================================
 
-@router.get("/transactions-deleted")
-async def get_deleted_transactions(
+@router.get("/sorties-deleted")
+async def get_deleted_sorties(
         page: int = Query(1, ge=1),
         limit: int = Query(20, ge=1, le=100)
 ):
-    """Liste des transactions supprimées (accessibles)"""
+    """Liste des sorties supprimées"""
 
-    where = {"is_deleted": True}
+    where = {"is_deleted": True, "type": "SORTIE"}
 
     total = await prisma.transaction.count(where=where)
 
@@ -440,12 +566,62 @@ async def get_deleted_transactions(
     }
 
 
+@router.post("/sorties/{reference}/restore")
+async def restore_sortie(
+        reference: str,
+        restored_by: str = "admin",
+        request: Request = None
+):
+    """Restaurer une sortie supprimée"""
+
+    existing = await prisma.transaction.find_unique(
+        where={"reference": reference}
+    )
+
+    if not existing or existing.type != "SORTIE":
+        raise HTTPException(status_code=404, detail="Sortie non trouvée")
+
+    if not existing.is_deleted:
+        raise HTTPException(
+            status_code=400,
+            detail="Sortie non supprimée"
+        )
+
+    # Restaurer
+    transaction = await prisma.transaction.update(
+        where={"reference": reference},
+        data={
+            "is_deleted": False,
+            "deleted_at": None,
+            "deleted_by": None,
+            "deleted_reason": None
+        }
+    )
+
+    # Créer audit log
+    ip = request.client.host if request else None
+    user_agent = request.headers.get("user-agent") if request else None
+
+    await create_audit_log(
+        transaction_id=existing.id,
+        action="RESTORE",
+        modified_by=restored_by,
+        ip_address=ip,
+        user_agent=user_agent
+    )
+
+    return {
+        "message": "Sortie restaurée avec succès",
+        "reference": reference
+    }
+
+
 # ============================================
 # AUDIT LOGS
 # ============================================
 
-@router.get("/transactions/{reference}/audit", response_model=List[AuditLogResponse])
-async def get_transaction_audit_logs(reference: str):
+@router.get("/audit/{reference}", response_model=List[AuditLogResponse])
+async def get_audit_logs(reference: str):
     """Historique des modifications d'une transaction"""
 
     transaction = await prisma.transaction.find_unique(
@@ -463,6 +639,113 @@ async def get_transaction_audit_logs(reference: str):
     logs_sorted = sorted(logs, key=lambda l: l.modified_at, reverse=True)
 
     return logs_sorted
+
+
+# ============================================
+# DASHBOARD
+# ============================================
+
+@router.get("/dashboard", response_model=DashboardFinance)
+async def get_dashboard():
+    """
+    Récupérer les données pour le tableau de bord financier
+    
+    Retourne:
+    - Totaux par catégorie d'entrée (inscriptions, dons, ventes)
+    - Total des sorties
+    - Solde global
+    - Transactions récentes
+    - Répartition pour graphiques
+    """
+    
+    # Récupérer toutes les transactions actives
+    all_transactions = await prisma.transaction.find_many(
+        where={"is_deleted": False}
+    )
+    
+    entrees = [t for t in all_transactions if t.type == "ENTREE"]
+    sorties = [t for t in all_transactions if t.type == "SORTIE"]
+    
+    # Calculer par catégorie d'entrée
+    inscriptions = [t for t in entrees if t.categorie == "Inscription"]
+    dons = [t for t in entrees if t.categorie == "Don"]
+    ventes = [t for t in entrees if t.categorie == "Vente"]
+    autres = [t for t in entrees if t.categorie not in ["Inscription", "Don", "Vente"]]
+    
+    inscriptions_data = {
+        "count": len(inscriptions),
+        "montant": sum(t.montant for t in inscriptions)
+    }
+    dons_data = {
+        "count": len(dons),
+        "montant": sum(t.montant for t in dons)
+    }
+    ventes_data = {
+        "count": len(ventes),
+        "montant": sum(t.montant for t in ventes)
+    }
+    autres_data = {
+        "count": len(autres),
+        "montant": sum(t.montant for t in autres)
+    }
+    
+    sorties_data = {
+        "count": len(sorties),
+        "montant": sum(t.montant for t in sorties)
+    }
+    
+    total_entrees = sum(t.montant for t in entrees)
+    total_sorties = sum(t.montant for t in sorties)
+    solde = total_entrees - total_sorties
+    
+    # Transactions récentes (10 dernières)
+    transactions_sorted = sorted(
+        all_transactions,
+        key=lambda t: t.date_transaction,
+        reverse=True
+    )[:10]
+    
+    transactions_recentes = []
+    for t in transactions_sorted:
+        trans_dict = {
+            "reference": t.reference,
+            "type": t.type,
+            "categorie": t.categorie,
+            "montant": t.montant,
+            "libelle": t.libelle,
+            "date_transaction": t.date_transaction.isoformat(),
+            "mode_paiement": t.mode_paiement
+        }
+        if t.matricule:
+            seminariste = await prisma.registration.find_unique(
+                where={"matricule": t.matricule}
+            )
+            if seminariste:
+                trans_dict["nom_seminariste"] = f"{seminariste.nom} {seminariste.prenom}"
+        transactions_recentes.append(trans_dict)
+    
+    # Répartition pour graphiques
+    repartition_entrees = {}
+    for t in entrees:
+        repartition_entrees[t.categorie] = repartition_entrees.get(t.categorie, 0) + t.montant
+    
+    repartition_sorties = {}
+    for t in sorties:
+        repartition_sorties[t.categorie] = repartition_sorties.get(t.categorie, 0) + t.montant
+    
+    return {
+        "inscriptions": inscriptions_data,
+        "dons": dons_data,
+        "ventes": ventes_data,
+        "autres_entrees": autres_data,
+        "sorties": sorties_data,
+        "total_entrees": total_entrees,
+        "total_sorties": total_sorties,
+        "solde": solde,
+        "transactions_recentes": transactions_recentes,
+        "repartition_entrees": repartition_entrees,
+        "repartition_sorties": repartition_sorties
+    }
 
 
 # ============================================
@@ -604,74 +887,121 @@ async def get_rapport_detail(numero: str):
 
 
 # ============================================
-# STATISTIQUES FINANCIÈRES
+# SYNCHRONISATION INSCRIPTIONS → FINANCES
 # ============================================
 
-@router.get("/stats", response_model=StatsFinancieres)
-async def get_statistics(
-        periode_debut: datetime,
-        periode_fin: datetime
+@router.post("/sync/inscriptions")
+async def sync_all_inscriptions(
+    montant_inscription: float = Query(6000, description="Montant par inscription en FCFA"),
+    created_by: str = "admin"
 ):
-    """Statistiques financières pour une période"""
-
-    where = {
-        "date_transaction": {
-            "gte": periode_debut,
-            "lte": periode_fin
-        },
-        "is_deleted": False
+    """
+    Synchroniser TOUTES les inscriptions existantes vers le module finance.
+    
+    Crée une entrée de type "Inscription" pour chaque registration 
+    qui n'a pas encore d'entrée finance associée.
+    """
+    
+    # Récupérer toutes les inscriptions
+    registrations = await prisma.registration.find_many()
+    
+    # Récupérer les matricules déjà synchronisés
+    existing_transactions = await prisma.transaction.find_many(
+        where={
+            "categorie": "Inscription",
+            "matricule": {"not": None}
+        }
+    )
+    existing_matricules = {t.matricule for t in existing_transactions}
+    
+    created_count = 0
+    skipped_count = 0
+    errors = []
+    
+    for reg in registrations:
+        if reg.matricule in existing_matricules:
+            skipped_count += 1
+            continue
+        
+        result = await create_inscription_entry(
+            matricule=reg.matricule,
+            nom=reg.nom,
+            prenom=reg.prenom,
+            montant=montant_inscription,
+            registration_date=reg.registration_date
+        )
+        
+        if result["success"]:
+            created_count += 1
+        else:
+            errors.append(result)
+    
+    return {
+        "message": "Synchronisation terminée",
+        "total_registrations": len(registrations),
+        "created": created_count,
+        "skipped": skipped_count,
+        "errors": len(errors),
+        "error_details": errors[:10]
     }
 
-    transactions = await prisma.transaction.find_many(where=where)
 
-    entrees = [t for t in transactions if t.type == "ENTREE"]
-    sorties = [t for t in transactions if t.type == "SORTIE"]
-
-    total_entrees = sum(t.montant for t in entrees)
-    total_sorties = sum(t.montant for t in sorties)
-
-    # Plus grosse transaction
-    plus_grosse_entree = max(entrees, key=lambda t: t.montant) if entrees else None
-    plus_grosse_sortie = max(sorties, key=lambda t: t.montant) if sorties else None
-
-    # Répartition catégories
-    categories_entrees = {}
-    for t in entrees:
-        categories_entrees[t.categorie] = categories_entrees.get(t.categorie, 0) + t.montant
-
-    categories_sorties = {}
-    for t in sorties:
-        categories_sorties[t.categorie] = categories_sorties.get(t.categorie, 0) + t.montant
-
-    # Évolution mensuelle
-    from collections import defaultdict
-    evolution = defaultdict(lambda: {"entrees": 0, "sorties": 0})
-
-    for t in transactions:
-        mois = t.date_transaction.strftime("%Y-%m")
-        if t.type == "ENTREE":
-            evolution[mois]["entrees"] += t.montant
-        else:
-            evolution[mois]["sorties"] += t.montant
-
-    evolution_list = [
-        {"mois": k, **v, "solde": v["entrees"] - v["sorties"]}
-        for k, v in sorted(evolution.items())
-    ]
-
+@router.post("/sync/inscription/{matricule}")
+async def sync_single_inscription(
+    matricule: str,
+    montant_inscription: float = Query(6000, description="Montant inscription en FCFA")
+):
+    """
+    Synchroniser UNE inscription spécifique vers le module finance.
+    """
+    
+    registration = await prisma.registration.find_unique(
+        where={"matricule": matricule}
+    )
+    
+    if not registration:
+        raise HTTPException(status_code=404, detail="Inscription non trouvée")
+    
+    result = await create_inscription_entry(
+        matricule=registration.matricule,
+        nom=registration.nom,
+        prenom=registration.prenom,
+        montant=montant_inscription,
+        registration_date=registration.registration_date
+    )
+    
+    if not result["success"]:
+        raise HTTPException(status_code=500, detail=result.get("error", "Erreur inconnue"))
+    
     return {
-        "periode_debut": periode_debut,
-        "periode_fin": periode_fin,
-        "total_entrees": total_entrees,
-        "total_sorties": total_sorties,
-        "solde": total_entrees - total_sorties,
-        "nb_transactions_entrees": len(entrees),
-        "nb_transactions_sorties": len(sorties),
-        "moyenne_entree": total_entrees / len(entrees) if entrees else 0,
-        "moyenne_sortie": total_sorties / len(sorties) if sorties else 0,
-        "plus_grosse_entree": plus_grosse_entree.model_dump() if plus_grosse_entree else None,
-        "plus_grosse_sortie": plus_grosse_sortie.model_dump() if plus_grosse_sortie else None,
-        "repartition_categories_entrees": categories_entrees,
-        "repartition_categories_sorties": categories_sorties,
-        "evolution_mensuelle": evolution_list
+        "message": "Synchronisée" if not result["already_exists"] else "Déjà synchronisée",
+        **result
+    }
+
+
+@router.get("/sync/status")
+async def get_sync_status():
+    """
+    Vérifier l'état de synchronisation entre inscriptions et finances.
+    """
+    
+    total_registrations = await prisma.registration.count()
+    
+    synced_transactions = await prisma.transaction.find_many(
+        where={
+            "categorie": "Inscription",
+            "matricule": {"not": None},
+            "is_deleted": False
+        }
+    )
+    synced_count = len(synced_transactions)
+    
+    total_amount = sum(t.montant for t in synced_transactions)
+    
+    return {
+        "total_registrations": total_registrations,
+        "synced_count": synced_count,
+        "not_synced_count": total_registrations - synced_count,
+        "sync_percentage": round((synced_count / total_registrations * 100) if total_registrations > 0 else 0, 2),
+        "total_amount": total_amount
     }

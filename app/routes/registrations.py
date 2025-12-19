@@ -137,6 +137,20 @@ async def create_registration(data: RegistrationCreate):
         data={"current_count": {"increment": 1}}
     )
 
+    # Créer automatiquement l'entrée finance (non-bloquant)
+    try:
+        from app.utils.finance_utils import create_inscription_entry
+        await create_inscription_entry(
+            matricule=matricule,
+            nom=personal.nom.upper(),
+            prenom=personal.prenom.upper(),
+            montant=float(payment.amount),
+            registration_date=datetime.now()
+        )
+    except Exception as e:
+        # Log l'erreur mais ne bloque pas l'inscription
+        logger.warning(f"Erreur création entrée finance pour {matricule}: {e}")
+
     # Récupérer avec les relations
     result = await prisma.registration.find_unique(
         where={"id": registration.id},
