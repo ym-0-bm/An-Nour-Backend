@@ -54,8 +54,7 @@ class NoteResponse(BaseModel):
 
 class BulletinGenerate(BaseModel):
     matricule: str
-    annee_scolaire: str
-    date_conseil: Optional[datetime] = None
+    annee_scolaire: Optional[str] = "AnNour25"
     observations: Optional[str] = None
 
 
@@ -72,8 +71,6 @@ class BulletinResponse(BaseModel):
     effectif_classe: Optional[int]
     mention: Optional[str]
     observations: Optional[str]
-    date_conseil: Optional[datetime]
-    pdf_url: Optional[str]
     generated_at: datetime
     generated_by: str
 
@@ -85,6 +82,33 @@ class BulletinDetail(BaseModel):
     bulletin: BulletinResponse
     notes: List[NoteResponse]
     seminariste: dict
+
+# ============================================
+# FORMATEURS
+# ============================================
+
+class FormateurCreate(BaseModel):
+    """Schéma pour créer un nouveau formateur"""
+    nom: str
+    prenoms: str
+    contact: str
+
+
+class FormateurResponse(BaseModel):
+    """Schéma de réponse pour un formateur"""
+    id: str
+    nom: str
+    prenoms: str
+    contact: str
+    created_at: datetime
+
+    model_config = {
+        "from_attributes": True
+    }
+
+class FormateurListResponse(BaseModel):
+    total: int
+    data: List[FormateurResponse]
 
 
 # ============================================

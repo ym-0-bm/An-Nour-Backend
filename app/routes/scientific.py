@@ -1,10 +1,11 @@
 from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Optional, List
+from app.utils.bulletin import calculer_moyenne, get_mention, calculer_rangs
 from datetime import datetime
 
 from app.models.scientific_schemas import (NoteUpdate, NoteResponse,
     BulletinGenerate, BulletinResponse, BulletinDetail,
-    StatsScientifiques
+    StatsScientifiques, FormateurCreate, FormateurResponse, FormateurListResponse
 )
 from app.database import prisma
 
@@ -218,6 +219,42 @@ async def get_notes(
         for note in notes
     ]
 
+@router.get(
+    "/seminaristes/{matricule}/notes",
+    response_model=List[NoteResponse]
+)
+async def get_notes_seminariste(matricule: str):
+    """Retourne toutes les notes d’un séminariste"""
+
+    notes = await prisma.note.find_many(
+        where={"matricule": matricule},
+        include={"seminariste": True},
+        order={"created_at": "asc"}
+    )
+
+    if not notes:
+        raise HTTPException(
+            status_code=404,
+            detail="Aucune note trouvée pour ce séminariste"
+        )
+
+    return [
+        {
+            "id": n.id,
+            "matricule": n.matricule,
+            "nom_seminariste": n.seminariste.nom,
+            "prenom_seminariste": n.seminariste.prenom,
+            "note": n.note,
+            "type": n.type,
+            "libelle": n.libelle,
+            "observation": n.observation,
+            "created_by": n.created_by,
+            "created_at": n.created_at,
+            "updated_at": n.updated_at,
+        }
+        for n in notes
+    ]
+
 
 @router.get("/notes/{id}", response_model=NoteResponse)
 async def get_note(id: str):
@@ -277,50 +314,40 @@ async def delete_note(id: str):
 # ============================================
 
 @router.post("/bulletins/generate", response_model=BulletinResponse, status_code=201)
-async def generate_bulletin(data: BulletinGenerate, generated_by: str = "admin"):
-    """Générer un bulletin"""
+async def generate_bulletin(data: BulletinGenerate, generated_by: str = "scientifique"):
 
-    # Récupérer toutes les notes du séminariste
     notes = await prisma.note.find_many(
         where={
-            "matricule": data.matricule
+            "matricule": data.matricule,
+            "type": {"not": "TEST_ENTREE"}
         }
     )
 
     if not notes:
         raise HTTPException(
             status_code=404,
-            detail="Aucune note trouvée pour cette période"
+            detail="Aucune note d’évaluation trouvée"
         )
 
+    moyenne = calculer_moyenne(notes)
+    mention = get_mention(moyenne)
 
-    moyenne = round(total_points / total_coef, 2) if total_coef > 0 else 0
+    rangs, effectif = await calculer_rangs()
+    rang = rangs.get(data.matricule)
 
-    # Déterminer mention
-    if moyenne >= 16:
-        mention = "Excellent"
-    elif moyenne >= 14:
-        mention = "Très bien"
-    elif moyenne >= 12:
-        mention = "Bien"
-    elif moyenne >= 10:
-        mention = "Passable"
-    else:
-        mention = "Insuffisant"
-
-    # Générer numéro unique
     numero = f"BUL-{data.matricule}-{data.annee_scolaire}".replace(" ", "")
 
-    # Créer bulletin
     bulletin = await prisma.bulletin.create(
         data={
             "numero": numero,
             "matricule": data.matricule,
             "annee_scolaire": data.annee_scolaire,
             "moyenne_generale": moyenne,
+            "total_coefficient": len(notes),
+            "rang": rang,
+            "effectif_classe": effectif,
             "mention": mention,
             "observations": data.observations,
-            "date_conseil": data.date_conseil,
             "generated_by": generated_by
         },
         include={"seminariste": True}
@@ -402,6 +429,109 @@ async def get_bulletins(
         }
         for b in bulletins
     ]
+
+# ============================================
+# FORMATEURS
+# ============================================
+
+@router.post("/Ajouter-formateur", response_model=FormateurResponse, status_code=201)
+async def create_formateur(data: FormateurCreate):
+    """
+    Créer un nouveau formateur
+    
+    - **nom**: Nom du formateur
+    - **prenoms**: Prénoms du formateur
+    - **contact**: Numéro de téléphone ou email du formateur
+    """
+    
+    # Créer le formateur dans la base de données
+    formateur = await prisma.formateur.create(
+        data={
+            "nom": data.nom.upper(),
+            "prenoms": data.prenoms.title(),
+            "contact": data.contact
+        }
+    )
+    
+    return FormateurResponse(
+        id=formateur.id,
+        nom=formateur.nom,
+        prenoms=formateur.prenoms,
+        contact=formateur.contact,
+        created_at=formateur.created_at
+    )
+
+
+@router.get("/formateurs", response_model=FormateurListResponse)
+async def get_formateurs():
+    """
+    Récupérer la liste de tous les formateurs
+    """
+    
+    # Récupérer tous les formateurs
+    formateurs = await prisma.formateur.find_many()
+    
+    # Trier par nom (en Python car MongoDB/Prisma peut avoir des limitations)
+    formateurs_sorted = sorted(formateurs, key=lambda f: (f.nom, f.prenoms))
+    
+    # Formater la réponse
+    data = [
+        FormateurResponse(
+            id=f.id,
+            nom=f.nom,
+            prenoms=f.prenoms,
+            contact=f.contact,
+            created_at=f.created_at
+        )
+        for f in formateurs_sorted
+    ]
+    
+    return FormateurListResponse(
+        total=len(data),
+        data=data
+    )
+
+
+@router.get("/{formateur_id}", response_model=FormateurResponse)
+async def get_formateur(formateur_id: str):
+    """
+    Récupérer un formateur par son ID
+    """
+    
+    formateur = await prisma.formateur.find_unique(where={"id": formateur_id})
+    
+    if not formateur:
+        raise HTTPException(status_code=404, detail="Formateur non trouvé")
+    
+    return FormateurResponse(
+        id=formateur.id,
+        nom=formateur.nom,
+        prenoms=formateur.prenoms,
+        contact=formateur.contact,
+        created_at=formateur.created_at
+    )
+
+
+@router.delete("/{formateur_id}")
+async def delete_formateur(formateur_id: str):
+    """
+    Supprimer un formateur
+    """
+    
+    formateur = await prisma.formateur.find_unique(where={"id": formateur_id})
+    
+    if not formateur:
+        raise HTTPException(status_code=404, detail="Formateur non trouvé")
+    
+    await prisma.formateur.delete(where={"id": formateur_id})
+    
+    return {
+        "message": "Formateur supprimé avec succès",
+        "deleted_id": formateur_id,
+        "nom": formateur.nom,
+        "prenoms": formateur.prenoms
+    }
+
 
 # ============================================
 # STATISTIQUES SCIENTIFIQUES

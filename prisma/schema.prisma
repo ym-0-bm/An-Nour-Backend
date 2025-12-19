@@ -104,8 +104,6 @@ model Bulletin {
   effectif_classe   Int?
   mention           String?      // "Excellent", "Très bien", "Bien", "Passable"
   observations      String?
-  date_conseil      DateTime?
-  pdf_url           String?
   generated_at      DateTime     @default(now())
   generated_by      String
 
@@ -180,6 +178,21 @@ model RapportFinancier {
   commentaires    String?
 
   @@map("rapports_financiers")
+}
+
+// ============================================
+// MODULE FORMATEURS
+// ============================================
+
+model Formateur {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  nom        String
+  prenoms    String
+  contact    String
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@map("formateurs")
 }
 
 // ============================================
