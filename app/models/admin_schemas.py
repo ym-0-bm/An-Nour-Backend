@@ -18,12 +18,12 @@ class UserCreate(BaseModel):
     password: str
     nom: str
     prenom: str
-    role: str  # "admin", "scientifique", "finances", "consultation"
+    role: str  # "admin", "scientifique", "finance"
 
     @field_validator('role')
     @classmethod
     def validate_role(cls, v):
-        valid_roles = ["admin", "scientifique", "finances", "consultation"]
+        valid_roles = ["admin", "scientifique", "finance"]
         if v not in valid_roles:
             raise ValueError(f'Le rôle doit être parmi {valid_roles}')
         return v
