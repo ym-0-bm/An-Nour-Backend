@@ -44,7 +44,7 @@ model Registration {
   antecedent_medical  String?   @default("Néant")
   payment_status      String    @default("completed") // "pending", "awaiting_proof", "completed"
   payment_timestamp   DateTime?
-  transaction_id      String?   @unique
+  transaction_id      String?
   // qr_code_data        String?   // Chaîne pour générer le QR code
   photo_url           String?
   validated           Boolean   @default(false)

@@ -245,7 +245,7 @@ class MembreCOResponse(BaseModel):
     photo_url: Optional[str]
     allergies: Optional[str]
     antecedent_medical: Optional[str]
-    created_at: datetime
+    created_at: Optional[datetime]
 
     model_config = {"from_attributes": True}
 
