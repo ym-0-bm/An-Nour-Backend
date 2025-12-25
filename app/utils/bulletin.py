@@ -3,12 +3,31 @@ from app.database import prisma
 Note = []
 
 def calculer_moyenne(notes: list[Note]) -> float:
-    notes_valides = [n.note for n in notes if n.type != "TEST_ENTREE"]
-
-    if not notes_valides:
-        return 0
-
-    return round(sum(notes_valides) / len(notes_valides), 2)
+    """
+    Calcule la moyenne avec 4 notes:
+    - Test d'entrée
+    - Évaluation 1
+    - Évaluation 2
+    - Évaluation 3
+    Toujours divisée par 4, même si des notes sont manquantes (comptées comme 0).
+    """
+    # Récupérer le test d'entrée (0 si absent)
+    note_entree = next((n.note for n in notes if n.type == "TEST_ENTREE"), 0)
+    
+    # Récupérer les notes d'évaluation triées par date de création
+    evaluations = sorted(
+        [n for n in notes if n.type == "EVALUATION"],
+        key=lambda n: n.created_at
+    )
+    
+    # Prendre les 3 premières évaluations (0 si manquantes)
+    note1 = evaluations[0].note if len(evaluations) > 0 else 0
+    note2 = evaluations[1].note if len(evaluations) > 1 else 0
+    note3 = evaluations[2].note if len(evaluations) > 2 else 0
+    
+    # Calculer la moyenne sur 4 notes (toujours divisé par 4)
+    total = note_entree + note1 + note2 + note3
+    return round(total / 4, 2)
 
 def get_mention(moyenne: float) -> str:
     if moyenne >= 16:
