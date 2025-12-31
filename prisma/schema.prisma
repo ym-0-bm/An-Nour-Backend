@@ -244,3 +244,39 @@ model User {
 
   @@map("users")
 }
+
+// ============================================
+// MODULE FEEDBACK/AVIS
+// ============================================
+
+model Feedback {
+  id                    String   @id @default(auto()) @map("_id") @db.ObjectId
+  
+  // Informations démographiques
+  sexe                  String?  // "M" ou "F"
+  nom                   String?  // Optionnel, pour recontacter
+  
+  // Notes (1-5 étoiles)
+  note_globale          Int      // 1-5
+  qualite_nourriture    Int      // 1-5
+  confort_dortoirs      Int      // 1-5
+  qualite_formations    Int      // 1-5
+  qualite_contenu       Int      // 1-5
+  
+  // Note organisation (0-10)
+  note_organisation     Int      // 0-10
+  
+  // Questions Oui/Non
+  duree_appropriee      Boolean
+  recommande            Boolean
+  
+  // Commentaires libres
+  points_apprecies      String?
+  suggestions           String?
+  
+  // Métadonnées
+  created_at            DateTime @default(now())
+  ip_address            String?  // Pour éviter les doublons
+  
+  @@map("feedbacks")
+}

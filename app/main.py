@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 from app.config import settings
 from app.database import connect_db, disconnect_db
-from app.routes import registrations, scientific, finance, admin, visiteurs
+from app.routes import registrations, scientific, finance, admin, visiteurs, feedback
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -46,6 +46,7 @@ app.include_router(scientific.router, prefix=settings.API_V1_STR)
 app.include_router(finance.router, prefix=settings.API_V1_STR)
 app.include_router(admin.router, prefix=settings.API_V1_STR)
 app.include_router(visiteurs.router, prefix=settings.API_V1_STR)
+app.include_router(feedback.router, prefix=settings.API_V1_STR)
 
 @app.get("/")
 async def root():
@@ -60,6 +61,7 @@ async def health():
             "inscriptions": "active",
             "scientifique": "active",
             "finances": "active",
-            "visiteurs": "active"
+            "visiteurs": "active",
+            "feedback": "active"
         }
     }

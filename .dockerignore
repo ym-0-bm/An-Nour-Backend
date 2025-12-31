@@ -1,0 +1,47 @@
+# Git
+.git
+.gitignore
+
+# Environment
+.env
+.venv
+venv
+ENV
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Media uploads (will use Render disk)
+media/participants_photos/*
+
+# Node modules (if any)
+node_modules
+
+# Documentation
+*.md
+!README.md
+
+# Testing
+.pytest_cache
+.coverage
+htmlcov
+.tox
+
+# Logs
+*.log
+logs/
+
+# Backup files
+*.bak
+backup/
