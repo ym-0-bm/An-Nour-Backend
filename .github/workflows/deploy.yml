@@ -13,6 +13,13 @@ jobs:
   test:
     name: Run Tests
     runs-on: ubuntu-latest
+    
+    env:
+      # Variables de test pour la validation CI (pas de vraie connexion)
+      DATABASE_URL: "mongodb://localhost:27017/test_db"
+      CLOUDINARY_CLOUD_NAME: "test_cloud"
+      CLOUDINARY_API_KEY: "test_api_key"
+      CLOUDINARY_API_SECRET: "test_api_secret"
 
     steps:
       - name: 📥 Checkout code
