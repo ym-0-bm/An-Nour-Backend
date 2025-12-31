@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings
 import os
-from dotenv import load_dotenv
+from pathlib import Path
 
 class Settings(BaseSettings):
     DATABASE_URL: str
@@ -14,7 +14,11 @@ class Settings(BaseSettings):
     CLOUDINARY_API_SECRET: str
 
     class Config:
-        env_file = ".env"
+        # Check for Render's secret file location first, then local .env
+        env_file = (
+            "/etc/secrets/.env" if Path("/etc/secrets/.env").exists() 
+            else ".env"
+        )
 
 
 settings = Settings()
