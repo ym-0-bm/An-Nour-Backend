@@ -430,18 +430,18 @@ async def upload_photo(matricule: str, photo: UploadFile = File(...)):
     if not registration:
         raise HTTPException(status_code=404, detail="Inscription non trouvée")
 
-    # Créer le dossier s'il n'existe pas
+    # Créer le dossier s'il n'existe pas (ancien code local - désactivé)
     # photo_dir = os.path.join(settings.MEDIA_DIR, "participants_photos")
     # os.makedirs(photo_dir, exist_ok=True)
 
-    # Sauvegarder la photo
+    # Sauvegarder la photo (ancien code local - désactivé)
     # extension = photo.filename.split(".")[-1]
     # filename = f"{matricule}.{extension}"
     # filepath = os.path.join(photo_dir, filename)
 
     # with open(filepath, "wb") as f:
-        content = await photo.read()
-        f.write(content)
+    #     content = await photo.read()
+    #     f.write(content)
 
     # Lire le contenu du fichier
     file_bytes = await photo.read()
@@ -458,21 +458,20 @@ async def upload_photo(matricule: str, photo: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur Cloudinary: {str(e)}")
 
-    # Mettre à jour l'inscription
+    # Ancien code local - désactivé
     # photo_url = f"/media/participants_photos/{filename}"
     # await prisma.registration.update(
-        where={"matricule": matricule},
-        data={
-            "photo_url": photo_url,
-            "validated": True
-        }
+    #     where={"matricule": matricule},
+    #     data={
+    #         "photo_url": photo_url,
+    #         "validated": True
+    #     }
     # )
-
     # return {
-        # "matricule": matricule,
-        # "photo_url": photo_url,
-        # "validated": True,
-        # "message": "Photo ajoutée avec succès"
+    #     "matricule": matricule,
+    #     "photo_url": photo_url,
+    #     "validated": True,
+    #     "message": "Photo ajoutée avec succès"
     # }
 
     # Récupérer l'URL sécurisée
