@@ -37,8 +37,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Monter les fichiers statiques
-app.mount("/media", StaticFiles(directory="media"), name="media")
+# Monter les fichiers statiques (si le répertoire existe)
+import os
+if os.path.isdir("media"):
+    app.mount("/media", StaticFiles(directory="media"), name="media")
 
 # Routes
 app.include_router(registrations.router, prefix=settings.API_V1_STR)
