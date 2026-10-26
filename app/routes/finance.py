@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Depends
 from typing import Optional, List
 from datetime import datetime
 import uuid
@@ -12,8 +12,9 @@ from app.models.finance_schemas import (
 )
 from app.database import prisma
 from app.utils.finance_utils import generate_reference, create_inscription_entry
+from app.utils.auth import RequireFinances, get_current_user
 
-router = APIRouter(prefix="/finances", tags=["Module Finances"])
+router = APIRouter(prefix="/finances", tags=["Module Finances"], dependencies=[RequireFinances])
 
 
 # ============================================
@@ -52,7 +53,7 @@ async def create_audit_log(
 @router.post("/entrees/don", response_model=TransactionResponse, status_code=201)
 async def create_entree_don(
     data: EntreeDonCreate,
-    created_by: str = "admin",
+    current_user=Depends(get_current_user),
     request: Request = None
 ):
     """
@@ -78,7 +79,7 @@ async def create_entree_don(
             "payeur": data.donateur,
             "mode_paiement": data.mode_paiement,
             "date_transaction": date,
-            "created_by": created_by,
+            "created_by": current_user.username,
             "statut": "validee"
         }
     )
@@ -90,7 +91,7 @@ async def create_entree_don(
     await create_audit_log(
         transaction_id=transaction.id,
         action="CREATE",
-        modified_by=created_by,
+        modified_by=current_user.username,
         ip_address=ip,
         user_agent=user_agent
     )
@@ -105,7 +106,7 @@ async def create_entree_don(
 @router.post("/entrees/vente", response_model=TransactionResponse, status_code=201)
 async def create_entree_vente(
     data: EntreeVenteCreate,
-    created_by: str = "admin",
+    current_user=Depends(get_current_user),
     request: Request = None
 ):
     """
@@ -130,7 +131,7 @@ async def create_entree_vente(
             "description": data.description,
             "mode_paiement": data.mode_paiement,
             "date_transaction": date,
-            "created_by": created_by,
+            "created_by": current_user.username,
             "statut": "validee"
         }
     )
@@ -142,7 +143,7 @@ async def create_entree_vente(
     await create_audit_log(
         transaction_id=transaction.id,
         action="CREATE",
-        modified_by=created_by,
+        modified_by=current_user.username,
         ip_address=ip,
         user_agent=user_agent
     )
@@ -246,7 +247,7 @@ async def get_entree(reference: str):
 @router.post("/sorties", response_model=TransactionResponse, status_code=201)
 async def create_sortie(
         data: SortieCreate,
-        created_by: str = "admin",
+        current_user=Depends(get_current_user),
         request: Request = None
 ):
     """
@@ -275,7 +276,7 @@ async def create_sortie(
             "beneficiaire": data.beneficiaire,
             "mode_paiement": data.mode_paiement,
             "date_transaction": date,
-            "created_by": created_by,
+            "created_by": current_user.username,
             "statut": "validee"
         }
     )
@@ -287,7 +288,7 @@ async def create_sortie(
     await create_audit_log(
         transaction_id=transaction.id,
         action="CREATE",
-        modified_by=created_by,
+        modified_by=current_user.username,
         ip_address=ip,
         user_agent=user_agent
     )
@@ -408,7 +409,7 @@ async def get_sortie(reference: str):
 async def update_sortie(
         reference: str,
         data: SortieUpdate,
-        modified_by: str = "admin",
+        current_user=Depends(get_current_user),
         request: Request = None
 ):
     """Modifier une sortie"""
@@ -438,7 +439,7 @@ async def update_sortie(
             await create_audit_log(
                 transaction_id=existing.id,
                 action="UPDATE",
-                modified_by=modified_by,
+                modified_by=current_user.username,
                 field_changed=field,
                 old_value=str(old_value),
                 new_value=str(new_value),
@@ -469,7 +470,7 @@ async def update_sortie(
 async def delete_sortie(
         reference: str,
         data: TransactionDelete,
-        deleted_by: str = "admin",
+        current_user=Depends(get_current_user),
         request: Request = None
 ):
     """Supprimer (soft delete) une sortie"""
@@ -493,7 +494,7 @@ async def delete_sortie(
         data={
             "is_deleted": True,
             "deleted_at": datetime.now(),
-            "deleted_by": deleted_by,
+            "deleted_by": current_user.username,
             "deleted_reason": data.deleted_reason
         }
     )
@@ -505,7 +506,7 @@ async def delete_sortie(
     await create_audit_log(
         transaction_id=existing.id,
         action="DELETE",
-        modified_by=deleted_by,
+        modified_by=current_user.username,
         old_value=f"Raison: {data.deleted_reason}",
         ip_address=ip,
         user_agent=user_agent
@@ -569,7 +570,7 @@ async def get_deleted_sorties(
 @router.post("/sorties/{reference}/restore")
 async def restore_sortie(
         reference: str,
-        restored_by: str = "admin",
+        current_user=Depends(get_current_user),
         request: Request = None
 ):
     """Restaurer une sortie supprimée"""
@@ -605,7 +606,7 @@ async def restore_sortie(
     await create_audit_log(
         transaction_id=existing.id,
         action="RESTORE",
-        modified_by=restored_by,
+        modified_by=current_user.username,
         ip_address=ip,
         user_agent=user_agent
     )
@@ -753,7 +754,7 @@ async def get_dashboard():
 # ============================================
 
 @router.post("/rapports/generate", response_model=RapportResponse, status_code=201)
-async def generate_rapport(data: RapportGenerate, generated_by: str = "admin"):
+async def generate_rapport(data: RapportGenerate, current_user=Depends(get_current_user)):
     """Générer un rapport financier"""
 
     # Récupérer transactions de la période
@@ -788,7 +789,7 @@ async def generate_rapport(data: RapportGenerate, generated_by: str = "admin"):
             "total_sorties": total_sorties,
             "solde": solde,
             "nb_transactions": len(transactions),
-            "generated_by": generated_by,
+            "generated_by": current_user.username,
             "commentaires": data.commentaires
         }
     )
@@ -892,8 +893,7 @@ async def get_rapport_detail(numero: str):
 
 @router.post("/sync/inscriptions")
 async def sync_all_inscriptions(
-    montant_inscription: float = Query(6000, description="Montant par inscription en FCFA"),
-    created_by: str = "admin"
+    montant_inscription: float = Query(6000, description="Montant par inscription en FCFA")
 ):
     """
     Synchroniser TOUTES les inscriptions existantes vers le module finance.

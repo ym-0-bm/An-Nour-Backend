@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import JSONResponse
 from typing import Optional, List
 from datetime import datetime
@@ -8,6 +8,10 @@ import json
 import logging
 from bson import ObjectId
 from bson.errors import InvalidId
+
+from app.utils.auth import RequireAdmin, RequireLectureSeminaristes
+from app.utils.rate_limit import rate_limit
+from app.utils.uploads import read_image_upload
 
 from app.models.schemas import (
     RegistrationCreate, RegistrationUpdate, RegistrationResponse,
@@ -32,31 +36,27 @@ receipt_analyzer = ReceiptAnalyzer()
 router = APIRouter(prefix="/registrations", tags=["Registrations"])
 
 
-@router.post("/verify-receipt")
-async def verify_receipt(file: UploadFile = File(...),
-                         expected_amount: int = Query(6000, description="Montant attendu en FCFA")):
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="Le fichier doit être une image")
-    try:
-        logger.info(f"📸 {file.filename} | 💰 {expected_amount} FCFA")
-        contents = await file.read()
+@router.post("/verify-receipt", dependencies=[Depends(rate_limit("verify-receipt", 10, 60))])
+async def verify_receipt(file: UploadFile = File(...)):
+    # Tarif unique fixé côté serveur : un éventuel ?expected_amount= du client est ignoré
+    expected_amount = settings.REGISTRATION_FEE
+    contents = await read_image_upload(file, settings.MAX_UPLOAD_BYTES)
+    logger.info(f"📸 Reçu de {len(contents)} octets | 💰 {expected_amount} FCFA")
 
-        # OCR (prétraitement obligatoire à l'intérieur de process_image)
-        text = ocr_processor.process_image(contents)
+    # OCR (prétraitement obligatoire à l'intérieur de process_image)
+    # Une erreur inattendue est journalisée et masquée par le gestionnaire global
+    text = ocr_processor.process_image(contents)
 
-        # Analyse
-        result = await receipt_analyzer.analyze_receipt(text, expected_amount)
+    # Analyse
+    result = await receipt_analyzer.analyze_receipt(text, expected_amount)
 
-        return JSONResponse(content=result, status_code=200)
-    except Exception as e:
-        logger.exception("Erreur lors de la vérification du reçu")
-
-        raise HTTPException(status_code=500, detail=f"Erreur serveur: {str(e)}")
+    return JSONResponse(content=result, status_code=200)
 
 
 
 # CREATE - Créer une inscription (avec le JSON du front)
-@router.post("", response_model=RegistrationResponse, status_code=201)
+@router.post("", response_model=RegistrationResponse, status_code=201,
+             dependencies=[Depends(rate_limit("registrations", 20, 60))])
 async def create_registration(data: RegistrationCreate):
     """Créer une nouvelle inscription à partir du JSON du front"""
 
@@ -144,7 +144,7 @@ async def create_registration(data: RegistrationCreate):
             matricule=matricule,
             nom=personal.nom.upper(),
             prenom=personal.prenom.upper(),
-            montant=float(payment.amount),
+            montant=float(settings.REGISTRATION_FEE),  # tarif unique, jamais le montant du client
             registration_date=datetime.now()
         )
     except Exception as e:
@@ -221,7 +221,7 @@ async def get_dortoirs(sexe: Optional[str] = Query(None, description="Filtrer pa
 
 # GET ALL DORTOIRS - Récupérer tous les dortoirs avec places disponibles
 @router.get("/alldortoirs", response_model=List[DortoirResponse])
-async def get_dortoirs(sexe: Optional[str] = Query(None, description="Filtrer par sexe: M ou F")):
+async def get_all_dortoirs(sexe: Optional[str] = Query(None, description="Filtrer par sexe: M ou F")):
     """Récupérer tous les dortoirs avec le nombre de places disponibles, filtrés par sexe si spécifié"""
 
     # Construire le filtre
@@ -253,7 +253,7 @@ async def get_dortoirs(sexe: Optional[str] = Query(None, description="Filtrer pa
     ]
 
 # READ ALL - Récupérer toutes les inscriptions
-@router.get("", response_model=PaginatedResponse)
+@router.get("", response_model=PaginatedResponse, dependencies=[RequireLectureSeminaristes])
 async def get_registrations(
         page: int = Query(1, ge=1),
         limit: int = Query(20, ge=1, le=100),
@@ -330,7 +330,7 @@ async def get_registrations(
 
 
 # READ ONE - Récupérer une inscription
-@router.get("/{identifier}", response_model=RegistrationResponse)
+@router.get("/{identifier}", response_model=RegistrationResponse, dependencies=[RequireLectureSeminaristes])
 async def get_registration(identifier: str):
 
     """
@@ -391,7 +391,7 @@ async def get_registration(identifier: str):
     )
 
 # UPDATE - Mettre à jour une inscription
-@router.put("/{id}", response_model=dict)
+@router.put("/{id}", response_model=dict, dependencies=[RequireAdmin])
 async def update_registration(id: str, data: RegistrationUpdate):
     """Mettre à jour une inscription"""
 
@@ -419,7 +419,7 @@ async def update_registration(id: str, data: RegistrationUpdate):
 
 
 # UPDATE PHOTO - Ajouter une photo
-@router.post("/{matricule}/photo")
+@router.post("/{matricule}/photo", dependencies=[RequireAdmin])
 async def upload_photo(matricule: str, photo: UploadFile = File(...)):
     """Ajouter/modifier la photo du participant"""
 
@@ -443,8 +443,8 @@ async def upload_photo(matricule: str, photo: UploadFile = File(...)):
     #     content = await photo.read()
     #     f.write(content)
 
-    # Lire le contenu du fichier
-    file_bytes = await photo.read()
+    # Lire le contenu du fichier (taille bornée, contenu vérifié)
+    file_bytes = await read_image_upload(photo, settings.MAX_UPLOAD_BYTES)
 
     # Envoyer vers Cloudinary
     try:
@@ -455,8 +455,9 @@ async def upload_photo(matricule: str, photo: UploadFile = File(...)):
             overwrite=True,  # remplace ancienne photo
             resource_type="image"
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur Cloudinary: {str(e)}")
+    except Exception:
+        logger.exception("Échec de l'envoi de la photo vers Cloudinary")
+        raise HTTPException(status_code=502, detail="Service de stockage des photos indisponible")
 
     # Ancien code local - désactivé
     # photo_url = f"/media/participants_photos/{filename}"
@@ -476,7 +477,6 @@ async def upload_photo(matricule: str, photo: UploadFile = File(...)):
 
     # Récupérer l'URL sécurisée
     image_url = upload_result.get("secure_url")
-    print("img : ", image_url)
 
     # Mettre à jour la BDD
     await prisma.registration.update(
@@ -489,7 +489,7 @@ async def upload_photo(matricule: str, photo: UploadFile = File(...)):
 
 
 # DELETE - Supprimer une inscription
-@router.delete("/{id}")
+@router.delete("/{id}", dependencies=[RequireAdmin])
 async def delete_registration(id: str):
     """Supprimer une inscription (admin uniquement)"""
 
@@ -514,7 +514,7 @@ async def delete_registration(id: str):
 
 
 # STATISTICS - Statistiques globales
-@router.get("/stats/global")
+@router.get("/stats/global", dependencies=[RequireLectureSeminaristes])
 async def get_statistics():
     """Obtenir les statistiques globales"""
 

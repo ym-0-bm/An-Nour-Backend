@@ -1,0 +1,7 @@
+[run]
+source = app
+omit =
+    app/__init__.py
+
+[report]
+skip_empty = true

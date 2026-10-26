@@ -8,18 +8,21 @@ on:
     branches:
       - main
 
+# Variables fictives communes : aucune vraie connexion, aucun secret réel
+env:
+  DATABASE_URL: "mongodb://localhost:27017/test_db"
+  CLOUDINARY_CLOUD_NAME: "test_cloud"
+  CLOUDINARY_API_KEY: "test_api_key"
+  CLOUDINARY_API_SECRET: "test_api_secret"
+  ENVIRONMENT: "test"
+  SECRET_KEY: "ci-test-only-secret-key-not-used-anywhere-else"
+  GITLEAKS_VERSION: "8.21.2"
+
 jobs:
-  # Job 1: Tests et validation
+  # Job 1: Lint et tests unitaires / API (Prisma simulé)
   test:
     name: Run Tests
     runs-on: ubuntu-latest
-    
-    env:
-      # Variables de test pour la validation CI (pas de vraie connexion)
-      DATABASE_URL: "mongodb://localhost:27017/test_db"
-      CLOUDINARY_CLOUD_NAME: "test_cloud"
-      CLOUDINARY_API_KEY: "test_api_key"
-      CLOUDINARY_API_SECRET: "test_api_secret"
 
     steps:
       - name: 📥 Checkout code
@@ -30,39 +33,157 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
+          cache-dependency-path: requirements*.txt
 
-      - name: � Install system dependencies
+      - name: 🔧 Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng
 
-      - name: �📦 Install dependencies
+      - name: 📦 Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio httpx
+          pip install -r requirements-dev.txt
 
-      - name: 🔍 Lint with flake8 (optional)
-        run: |
-          pip install flake8
-          # Stop on syntax errors or undefined names
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-          # Exit-zero treats all errors as warnings
-          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-        continue-on-error: true
+      - name: 🔍 Lint (erreurs bloquantes)
+        run: flake8 . --count --select=E9,F63,F7,F82,F811 --show-source --statistics
+
+      - name: 🔍 Lint (style, indicatif)
+        run: flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
       - name: 🔨 Generate Prisma Client
         run: prisma generate
 
-      - name: 🧪 Run basic import tests
+      - name: 🧪 Run tests with coverage
+        run: pytest -q --cov-report=xml
+
+      - name: 📊 Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-backend
+          path: coverage.xml
+          if-no-files-found: ignore
+
+  # Job 2: Tests d'intégration contre un MongoDB éphémère (replica set requis par Prisma)
+  integration:
+    name: Integration Tests
+    # Version figée : le dépôt APT MongoDB ci-dessous est celui d'Ubuntu 24.04 (noble)
+    runs-on: ubuntu-24.04
+    env:
+      INTEGRATION_DATABASE_URL: "mongodb://127.0.0.1:27017/annour_test?replicaSet=rs0&directConnection=true"
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      # mongod natif (même procédure que la validation locale) : le conteneur mongo:8.0
+      # s'arrêtait au démarrage sur le runner, sans journal exploitable
+      - name: 🍃 Start MongoDB replica set
         run: |
-          python -c "from app.main import app; print('✅ App imports successfully')"
-          python -c "from app.database import prisma; print('✅ Database imports successfully')"
+          if ! command -v mongod >/dev/null || ! command -v mongosh >/dev/null; then
+            curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc \
+              | sudo gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
+            echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/8.0 multiverse" \
+              | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
+            sudo apt-get update
+            sudo apt-get install -y mongodb-org
+          fi
+          mongod --version | head -1
+          mkdir -p "$RUNNER_TEMP/mongo-db"
+          mongod --dbpath "$RUNNER_TEMP/mongo-db" --port 27017 --bind_ip 127.0.0.1 --replSet rs0 \
+            --fork --logpath "$RUNNER_TEMP/mongod.log" || { cat "$RUNNER_TEMP/mongod.log"; exit 1; }
+          mongosh --quiet --port 27017 --eval 'rs.initiate({_id:"rs0", members:[{_id:0, host:"127.0.0.1:27017"}]}).ok'
+          for i in $(seq 1 30); do
+            if [ "$(mongosh --quiet --port 27017 --eval 'db.hello().isWritablePrimary')" = "true" ]; then
+              echo "MongoDB primaire prêt"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Le replica set MongoDB n'est pas devenu primaire"
+          tail -n 50 "$RUNNER_TEMP/mongod.log"
+          exit 1
 
-      - name: ✅ Tests passed
-        run: echo "All tests passed successfully!"
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: requirements*.txt
 
-  # Job 2: Build validation
+      - name: 🔧 Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng
+
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: 🔨 Generate Prisma Client and push schema to the test database
+        env:
+          DATABASE_URL: ${{ env.INTEGRATION_DATABASE_URL }}
+        run: |
+          prisma generate
+          prisma db push --skip-generate
+
+      - name: 🧪 Run integration tests
+        run: pytest -q tests/integration --no-cov
+
+      - name: 📋 MongoDB log (on failure)
+        if: failure()
+        run: tail -n 100 "$RUNNER_TEMP/mongod.log" || true
+
+  # Job 3: Secrets et dépendances
+  security:
+    name: Security Scans
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔐 Install gitleaks (checksum verified)
+        run: |
+          V="${GITLEAKS_VERSION}"
+          BASE="https://github.com/gitleaks/gitleaks/releases/download/v${V}"
+          curl -sSfL -o gitleaks.tar.gz "${BASE}/gitleaks_${V}_linux_x64.tar.gz"
+          curl -sSfL -o checksums.txt "${BASE}/gitleaks_${V}_checksums.txt"
+          grep " gitleaks_${V}_linux_x64.tar.gz$" checksums.txt | sed "s/gitleaks_${V}_linux_x64.tar.gz/gitleaks.tar.gz/" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+
+      - name: 🔐 Secrets introduced by this push / PR (blocking)
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            RANGE="${{ github.event.before }}..${{ github.sha }}"
+          else
+            RANGE="${{ github.sha }}~1..${{ github.sha }}"
+          fi
+          ./gitleaks git --config .gitleaks.toml --redact --no-banner --log-opts="${RANGE}" .
+
+      - name: 🔐 Full history scan (report only)
+        continue-on-error: true
+        run: ./gitleaks git --config .gitleaks.toml --redact --no-banner .
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 🛡️ Dependency audit (report only)
+        continue-on-error: true
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit==2.9.0
+          pip-audit -r requirements.txt --progress-spinner off
+
+  # Job 4: Build validation
   build:
     name: Validate Build
     runs-on: ubuntu-latest
@@ -93,23 +214,23 @@ jobs:
       - name: ✅ Build validation complete
         run: echo "Build validated successfully!"
 
-  # Job 3: Deploy to Render
+  # Job 5: Deploy to Render (uniquement après succès de tous les contrôles)
   deploy:
     name: Deploy to Render
     runs-on: ubuntu-latest
-    needs: [test, build]
+    needs: [test, integration, security, build]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
       - name: 🚀 Trigger Render Deploy
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
         run: |
-          echo "🚀 Deploying to Render..."
-          echo "Branch: ${{ github.ref }}"
-          echo "Commit: ${{ github.sha }}"
-          echo "Author: ${{ github.actor }}"
-          
-          # Trigger Render deploy hook
-          curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
-          
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "Secret RENDER_DEPLOY_HOOK_URL absent" >&2
+            exit 1
+          fi
+          echo "🚀 Deploying commit ${{ github.sha }} to Render..."
+          # --fail : un hook en erreur fait échouer le job (l'URL n'est jamais affichée)
+          curl --fail --silent --show-error -X POST "$RENDER_DEPLOY_HOOK_URL" > /dev/null
           echo "✅ Deploy triggered successfully!"
-          echo "Monitor deployment at: https://dashboard.render.com"

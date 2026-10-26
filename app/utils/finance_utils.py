@@ -4,8 +4,11 @@ Fonctions réutilisables pour créer des transactions automatiquement.
 """
 
 from datetime import datetime
+import logging
 import uuid
 from app.database import prisma
+
+logger = logging.getLogger(__name__)
 
 
 def generate_reference(type: str) -> str:
@@ -89,9 +92,10 @@ async def create_inscription_entry(
             "montant": montant
         }
         
-    except Exception as e:
+    except Exception:
+        logger.exception("Échec de la création de l'entrée finance pour %s", matricule)
         return {
             "success": False,
-            "error": str(e),
+            "error": "Erreur lors de la création de l'entrée finance",
             "matricule": matricule
         }

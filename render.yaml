@@ -6,9 +6,19 @@ services:
     branch: main
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
-    autoDeploy: true
+    autoDeploy: false  # déploiement uniquement via le hook, après succès du CI
     envVars:
       - key: DATABASE_URL
+        sync: false
+      - key: ENVIRONMENT
+        value: production
+      - key: SECRET_KEY
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
         sync: false
       - key: API_V1_STR
         value: /api/v1

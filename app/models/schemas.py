@@ -1,34 +1,38 @@
-from pydantic import BaseModel, Field, field_validator
-from typing import Optional, List
+from pydantic import BaseModel, Field, StringConstraints, field_validator
+from typing import Annotated, Optional, List
 from datetime import datetime
+
+from app.models.constraints import (
+    ShortText, OptionalShortText, Contact, OptionalContact, LongText, Identifier, Url
+)
 
 
 class PersonalInfo(BaseModel):
-    nom: str
-    prenom: str
-    sexe: str
-    age: str
-    communeHabitation: str
-    niveauAcademique: str
-    communeAutre: Optional[str] = ""
-    contactParent: str
-    contactSeminariste: Optional[str] = ""
+    nom: ShortText
+    prenom: ShortText
+    sexe: ShortText
+    age: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=3)]
+    communeHabitation: ShortText
+    niveauAcademique: ShortText
+    communeAutre: Optional[OptionalShortText] = ""
+    contactParent: Contact
+    contactSeminariste: Optional[OptionalContact] = ""
 
 
 class DormitoryInfo(BaseModel):
-    dortoir: str
-    dortoirId: str
+    dortoir: ShortText
+    dortoirId: Identifier
 
 
 class HealthInfo(BaseModel):
-    allergie: Optional[str] = "RAS"
-    antecedentMedical: Optional[str] = "Néant"
+    allergie: Optional[LongText] = "RAS"
+    antecedentMedical: Optional[LongText] = "Néant"
 
 
 class PaymentInfo(BaseModel):
-    transactionId: str
-    receiptUrl: Optional[str] = None
-    amount: int  # Ne sera pas stocké en DB
+    transactionId: Identifier
+    receiptUrl: Optional[Url] = None
+    amount: int  # Ignoré : le tarif unique est fixé côté serveur (REGISTRATION_FEE)
 
 
 class RegistrationCreate(BaseModel):
