@@ -1,10 +1,11 @@
 import re
+import warnings
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
-from jose import jwt
+import jwt
 from prisma.models import User
 
 from app.database import prisma
@@ -71,6 +72,14 @@ MIN_EXPECTED_ROUTES = 75
 PROTECTED = [(m, r) for m, r in ROUTES if expected_access(m, r.path) is not None]
 ROUTE_IDS = [f"{m} {r.path}" for m, r in ROUTES]
 PROTECTED_IDS = [f"{m} {r.path}" for m, r in PROTECTED]
+
+
+def hs384_token_with_app_key():
+    """Token signé avec la bonne clé mais un autre algorithme (doit être refusé).
+    La clé de test est courte pour HS384 : l'avertissement de PyJWT est attendu ici seulement."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", jwt.warnings.InsecureKeyLengthWarning)
+        return jwt.encode({"sub": IDS[ADMIN]}, SECRET_KEY, algorithm="HS384")
 
 
 def concrete_path(path):
@@ -198,7 +207,7 @@ def test_protected_route_rejects_bad_tokens(client, method, route):
         "pas-un-jwt",
         jwt.encode({"sub": IDS[ADMIN], "exp": now + timedelta(hours=1)}, "autre-cle-de-signature-quelconque-123", algorithm=ALGORITHM),
         jwt.encode({"sub": IDS[ADMIN], "exp": now - timedelta(minutes=1)}, SECRET_KEY, algorithm=ALGORITHM),
-        jwt.encode({"sub": IDS[ADMIN]}, SECRET_KEY, algorithm="HS384"),
+        hs384_token_with_app_key(),
         create_access_token({"sub": "pas-un-objectid"}),
         create_access_token({"sub": "9" * 24}),  # utilisateur inexistant
         create_access_token({"email": "sans-sub@exemple.test"}),

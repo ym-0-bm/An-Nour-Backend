@@ -2,7 +2,7 @@ import hashlib
 
 import pytest
 from fastapi import HTTPException
-from jose import jwt
+import jwt
 
 from app.config import LEGACY_SECRET_KEY_SHA256, Settings, load_settings
 from tests.conftest import TEST_ENV
