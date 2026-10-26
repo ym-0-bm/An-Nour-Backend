@@ -1,4 +1,5 @@
 import io
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -195,34 +196,86 @@ def test_photo_storage_error_is_generic(client, fake_photo_upload, monkeypatch):
     assert SECRET_MARKER not in response.text
 
 
-def test_registration_uses_server_fee(client, monkeypatch):
-    captured = {}
+@pytest.fixture
+def fake_registration_db(monkeypatch):
+    """Faux Prisma pour la création d'inscription : enregistre les appels."""
+    state = {"created": [], "dortoir_updates": [], "finance_calls": [], "reserved": 1, "create_errors": 0}
     dortoir = SimpleNamespace(code="D1", current_count=0, capacity=10, gender="M", name="Dortoir 1")
 
-    async def ok(*args, **kwargs):
+    async def dortoir_find_unique(where):
+        return dortoir
+
+    async def dortoir_update_many(where, data):
+        return state["reserved"]
+
+    async def dortoir_update(where, data):
+        state["dortoir_updates"].append(data)
         return dortoir
 
     async def none(*args, **kwargs):
         return None
 
-    async def created(*args, **kwargs):
+    async def create(data):
+        if state["create_errors"]:
+            state["create_errors"] -= 1
+            raise UniqueViolationError({"user_facing_error": {"message": "doublon"}})
+        state["created"].append(data)
         return SimpleNamespace(id="r" * 24)
 
-    async def capture(**kwargs):
-        captured.update(kwargs)
-        return {"success": True}
+    async def find_unique(where, include=None):
+        data = state["created"][-1]
+        return SimpleNamespace(id="r" * 24, dortoir=dortoir, photo_url=None, validated=False,
+                               registration_date=datetime(2026, 1, 1), **{
+                                   k: data.get(k) for k in ("matricule", "nom", "prenom", "sexe", "age",
+                                                            "commune_habitation", "contact_parent", "contact_seminariste",
+                                                            "niveau_academique", "dortoir_code", "allergie",
+                                                            "antecedent_medical", "payment_status", "transaction_id")})
 
     async def matricule(code):
-        return "M-TEST"
+        return f"ANNOUR26-{code}-{len(state['created']) + 1:03d}"
 
-    monkeypatch.setattr(prisma, "dortoir", SimpleNamespace(find_unique=ok, update=ok))
-    # find_unique final volontairement en échec : seule l'écriture financière nous intéresse ici
-    monkeypatch.setattr(prisma, "registration", SimpleNamespace(find_first=none, create=created, find_unique=Raising(RuntimeError()).find_unique))
+    async def finance(**kwargs):
+        state["finance_calls"].append(kwargs)
+
+    monkeypatch.setattr(prisma, "dortoir", SimpleNamespace(find_unique=dortoir_find_unique,
+                                                           update_many=dortoir_update_many, update=dortoir_update))
+    monkeypatch.setattr(prisma, "usedtransaction", SimpleNamespace(find_unique=none))
+    monkeypatch.setattr(prisma, "registration", SimpleNamespace(find_first=none, create=create, find_unique=find_unique))
     monkeypatch.setattr(registrations_module, "generate_matricule", matricule)
-    monkeypatch.setattr(finance_utils, "create_inscription_entry", capture)
+    monkeypatch.setattr(registrations_module, "create_inscription_entry", finance)
+    return state
 
-    client.post(f"{API}/registrations", json=registration_body(amount=1))
-    assert captured["montant"] == float(settings.REGISTRATION_FEE)
+
+def test_registration_is_pending_without_finance_entry(client, fake_registration_db):
+    response = client.post(f"{API}/registrations", json=registration_body(amount=1))
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["payment_status"] == "en_attente"
+    token = body["verification_token"]
+    assert len(token) >= 32
+
+    stored = fake_registration_db["created"][0]
+    assert stored["payment_status"] == "en_attente"
+    assert stored["receipt_token_hash"] != token  # le jeton n'est jamais stocké en clair
+    assert fake_registration_db["finance_calls"] == []  # aucune entrée financière avant vérification
+
+
+def test_full_dormitory_creates_nothing(client, fake_registration_db):
+    fake_registration_db["reserved"] = 0  # réservation atomique refusée
+    assert client.post(f"{API}/registrations", json=registration_body()).status_code == 409
+    assert fake_registration_db["created"] == []
+
+
+def test_failed_creation_releases_reserved_place(client, fake_registration_db):
+    fake_registration_db["create_errors"] = 99  # collisions de matricule répétées
+    assert client.post(f"{API}/registrations", json=registration_body()).status_code == 503
+    assert fake_registration_db["dortoir_updates"] == [{"current_count": {"decrement": 1}}]
+
+
+def test_matricule_collision_is_retried(client, fake_registration_db):
+    fake_registration_db["create_errors"] = 1
+    assert client.post(f"{API}/registrations", json=registration_body()).status_code == 201
+    assert fake_registration_db["dortoir_updates"] == []
 
 
 # ---------------------------------------------------------------------------

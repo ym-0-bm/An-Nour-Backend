@@ -1,5 +1,4 @@
 # utils/receipt_analyzer.py
-import random
 import re
 import logging
 from typing import Optional, Dict, Any
@@ -89,27 +88,19 @@ class ReceiptAnalyzer:
 
     def extract_transaction_id(self, raw_text: str) -> Optional[str]:
         """
-        Extrait l'ID de transaction (supporte T., T_, TZ, etc.)
+        Extrait l'ID de transaction Wave : commence par T, 15 à 20 caractères (supporte T., T_, T-).
         Exemple: T.V4FVURZFR0PGF3MQ → TV4FVURZFR0PGF3MQ
+        L'analyse se fait ligne par ligne : supprimer les retours à la ligne collait l'ID
+        à la ligne suivante (anomalie A5). Sans ID lisible, retourne None (anomalie A1 :
+        plus aucun ID aléatoire n'est fabriqué).
         """
-        # clean = self._clean_ocr(raw_text)
-
-        text_clean = (raw_text.replace(" ", "")
-                      .replace("\n", "")
-                      .replace("-\n\nTransactionID\n\n", "")
-                      .replace("-", ""))
-        print(text_clean)
-        # ID Wave = 12 à 20 caractères alphanumériques
-        m = re.findall(r"[A-Z0-9]{15,20}", text_clean)
-
-        # Filtre : Wave ID commence toujours par T (TPK…, TZ5…, TMR…)
-        ids = [x for x in m if x.startswith("T")]
-
-        if ids:
-            return ids[0]
-        # s'il trouve pas de ID valide qu'il génére un du format TANNOURXXXXXX
-        random_id = "TANNOUR" + "".join(random.choices("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", k=8))
-        return random_id
+        for line in (raw_text or "").upper().splitlines():
+            candidats = [re.sub(r"[.\-_]", "", token) for token in line.split()]
+            candidats.append(re.sub(r"[\s.\-_]", "", line))
+            for candidat in candidats:
+                if re.fullmatch(r"T[A-Z0-9]{14,19}", candidat) and candidat not in self.transaction_id_blacklist:
+                    return candidat
+        return None
 
     def extract_account_name(self, raw_text: str) -> Optional[str]:
         """
@@ -240,7 +231,7 @@ class ReceiptAnalyzer:
 
         # ❌ Cas spécifiques (1 seule erreur majeure)
         if len(errors) == 1:
-            error = errors
+            error = errors[0]
 
             if "Signature Wave" in error:
                 return "Ceci n'est pas un reçu Wave. Envoyez une capture depuis votre application Wave."
@@ -287,13 +278,16 @@ class ReceiptAnalyzer:
         amount_ok = amount is not None and amount == expected_amount
         name_ok = account_name in['AN-NOUR']
 
-        # Vérifier que la transctionId est unique dans la base de données
-        transaction_id_exist = await prisma.registration.find_first(
-            where={"transaction_id": transaction_id}
-        )
+        # Vérifier que la transaction n'a pas déjà servi (registre des transactions + inscriptions)
+        transaction_id_exist = None
+        if transaction_id:
+            transaction_id_exist = (
+                await prisma.usedtransaction.find_unique(where={"transaction_id": transaction_id})
+                or await prisma.registration.find_first(where={"transaction_id": transaction_id})
+            )
 
         # Validation globale
-        is_valid = bool(not transaction_id_exist and amount_ok and status_ok and is_wave and name_ok)
+        is_valid = bool(transaction_id and not transaction_id_exist and amount_ok and status_ok and is_wave and name_ok)
 
         # Score cohérent (total = 100)
         score = 0

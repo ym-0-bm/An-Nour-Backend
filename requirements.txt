@@ -11,6 +11,7 @@ colorama==0.4.6
 cryptography==46.0.3
 dnspython==2.8.0
 email-validator==2.3.0
+et-xmlfile==2.0.0
 fastapi==0.162.0
 fastapi-cli==0.0.16
 fastapi-cloud-cli==0.3.1
@@ -27,6 +28,7 @@ nodeenv==1.9.1
 numpy==2.2.6
 opencv-python==4.12.0.88
 opencv-python-headless==4.12.0.88
+openpyxl==3.1.5
 packaging==25.0
 passlib==1.7.4
 pillow==13.0.0

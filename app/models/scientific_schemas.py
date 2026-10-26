@@ -38,8 +38,8 @@ class NoteResponse(BaseModel):
     nom_seminariste: Optional[str] = None
     prenom_seminariste: Optional[str] = None
     note: float
-    type: str
-    libelle: str
+    type: Optional[str] = None     # Optionnel en base (anciennes notes)
+    libelle: Optional[str] = None  # Les évaluations peuvent ne pas avoir de libellé
     observation: Optional[str]
     created_by: str
     created_at: datetime

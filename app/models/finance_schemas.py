@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, List
 from datetime import datetime
 
@@ -66,7 +66,8 @@ class TransactionDelete(BaseModel):
 
 class SortieCreate(BaseModel):
     """Schéma simplifié pour créer une sortie (dépense)"""
-    categorie: Optional[str] = None  # Ex: "Achat matériel", "Transport", "Nourriture", "Salaires"
+    # Obligatoire : Transaction.categorie est requis en base (sinon erreur 500)
+    categorie: str = Field(min_length=1)  # Ex: "Achat matériel", "Transport", "Nourriture", "Salaires"
     montant: float  
     libelle: str  # Description courte
     beneficiaire: Optional[str] = None  # Qui reçoit le paiement
@@ -89,6 +90,22 @@ class SortieUpdate(BaseModel):
     beneficiaire: Optional[str] = None
     mode_paiement: Optional[str] = None
     date_transaction: Optional[datetime] = None
+
+    @field_validator('montant')
+    @classmethod
+    def validate_montant(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError('Le montant doit être positif')
+        return v
+
+    @model_validator(mode='after')
+    def reject_null_required_fields(self):
+        # Ces champs sont obligatoires en base : un null explicite ne peut pas les effacer
+        required = ('categorie', 'montant', 'libelle', 'mode_paiement', 'date_transaction')
+        nulls = [f for f in required if f in self.model_fields_set and getattr(self, f) is None]
+        if nulls:
+            raise ValueError(f"Champs obligatoires, ne peuvent pas être vides : {', '.join(nulls)}")
+        return self
 
 
 class TransactionResponse(BaseModel):

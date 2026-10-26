@@ -1,4 +1,4 @@
-from typing import Annotated, List, Literal
+from typing import Annotated, List, Literal, Optional
 import hashlib
 import json
 from pathlib import Path
@@ -31,6 +31,10 @@ class Settings(BaseSettings):
 
     # Tarif unique d'inscription (FCFA) : seule référence pour la vérification des reçus et les finances
     REGISTRATION_FEE: int = Field(default=6000, gt=0)
+
+    # Matricules (B8) : ANNOUR + 2 chiffres de l'année ; MATRICULE_YEAR force l'année, sinon année courante
+    MATRICULE_PREFIX: str = Field(default="ANNOUR", pattern=r"^[A-Z]{2,12}$")
+    MATRICULE_YEAR: Optional[int] = Field(default=None, ge=2000, le=2099)
 
     # Téléversements d'images (reçus, photos)
     MAX_UPLOAD_BYTES: int = Field(default=5 * 1024 * 1024, gt=0)

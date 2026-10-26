@@ -138,4 +138,6 @@ RequireAdmin = Depends(require_role([ROLE_ADMIN]))
 RequireScientifique = Depends(require_role([ROLE_ADMIN, ROLE_SCIENTIFIQUE]))
 RequireFinances = Depends(require_role([ROLE_ADMIN, ROLE_FINANCES]))
 RequireLectureSeminaristes = Depends(require_role([ROLE_ADMIN, ROLE_SCIENTIFIQUE, ROLE_SANTE]))
+# Données médicales : décision Partie 6, accès complet pour sante et admin
+RequireSante = Depends(require_role([ROLE_ADMIN, ROLE_SANTE]))
 RequireAny = Depends(get_current_user)

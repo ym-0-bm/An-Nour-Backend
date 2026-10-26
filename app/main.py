@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from app.config import settings
 from app.database import connect_db, disconnect_db
 from app.utils.errors import get_request_id, register_exception_handlers
-from app.routes import registrations, scientific, finance, admin, visiteurs, feedback
+from app.routes import registrations, scientific, finance, admin, visiteurs, feedback, sante
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -61,7 +61,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
-    expose_headers=["X-Request-ID", "Retry-After"],
+    expose_headers=["X-Request-ID", "Retry-After", "X-Total-Count"],
 )
 
 # Routes
@@ -71,6 +71,7 @@ app.include_router(finance.router, prefix=settings.API_V1_STR)
 app.include_router(admin.router, prefix=settings.API_V1_STR)
 app.include_router(visiteurs.router, prefix=settings.API_V1_STR)
 app.include_router(feedback.router, prefix=settings.API_V1_STR)
+app.include_router(sante.router, prefix=settings.API_V1_STR)
 
 @app.get("/")
 async def root():
