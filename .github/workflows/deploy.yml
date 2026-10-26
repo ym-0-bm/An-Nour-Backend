@@ -68,7 +68,8 @@ jobs:
   # Job 2: Tests d'intégration contre un MongoDB éphémère (replica set requis par Prisma)
   integration:
     name: Integration Tests
-    runs-on: ubuntu-latest
+    # Version figée : le dépôt APT MongoDB ci-dessous est celui d'Ubuntu 24.04 (noble)
+    runs-on: ubuntu-24.04
     env:
       INTEGRATION_DATABASE_URL: "mongodb://127.0.0.1:27017/annour_test?replicaSet=rs0&directConnection=true"
 
@@ -76,18 +77,33 @@ jobs:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
 
+      # mongod natif (même procédure que la validation locale) : le conteneur mongo:8.0
+      # s'arrêtait au démarrage sur le runner, sans journal exploitable
       - name: 🍃 Start MongoDB replica set
         run: |
-          docker run -d --name mongo -p 27017:27017 mongo:8.0 --replSet rs0 --bind_ip_all
+          if ! command -v mongod >/dev/null || ! command -v mongosh >/dev/null; then
+            curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc \
+              | sudo gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
+            echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/8.0 multiverse" \
+              | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
+            sudo apt-get update
+            sudo apt-get install -y mongodb-org
+          fi
+          mongod --version | head -1
+          mkdir -p "$RUNNER_TEMP/mongo-db"
+          mongod --dbpath "$RUNNER_TEMP/mongo-db" --port 27017 --bind_ip 127.0.0.1 --replSet rs0 \
+            --fork --logpath "$RUNNER_TEMP/mongod.log" || { cat "$RUNNER_TEMP/mongod.log"; exit 1; }
+          mongosh --quiet --port 27017 --eval 'rs.initiate({_id:"rs0", members:[{_id:0, host:"127.0.0.1:27017"}]}).ok'
           for i in $(seq 1 30); do
-            docker exec mongo mongosh --quiet --eval "db.runCommand({ping:1}).ok" && break
+            if [ "$(mongosh --quiet --port 27017 --eval 'db.hello().isWritablePrimary')" = "true" ]; then
+              echo "MongoDB primaire prêt"
+              exit 0
+            fi
             sleep 2
           done
-          docker exec mongo mongosh --quiet --eval 'rs.initiate({_id:"rs0", members:[{_id:0, host:"127.0.0.1:27017"}]})'
-          for i in $(seq 1 30); do
-            [ "$(docker exec mongo mongosh --quiet --eval 'db.hello().isWritablePrimary')" = "true" ] && break
-            sleep 2
-          done
+          echo "::error::Le replica set MongoDB n'est pas devenu primaire"
+          tail -n 50 "$RUNNER_TEMP/mongod.log"
+          exit 1
 
       - name: 🐍 Set up Python
         uses: actions/setup-python@v5
@@ -115,6 +131,10 @@ jobs:
 
       - name: 🧪 Run integration tests
         run: pytest -q tests/integration --no-cov
+
+      - name: 📋 MongoDB log (on failure)
+        if: failure()
+        run: tail -n 100 "$RUNNER_TEMP/mongod.log" || true
 
   # Job 3: Secrets et dépendances
   security:
@@ -145,11 +165,11 @@ jobs:
           else
             RANGE="${{ github.sha }}~1..${{ github.sha }}"
           fi
-          ./gitleaks git --redact --no-banner --log-opts="${RANGE}" .
+          ./gitleaks git --config .gitleaks.toml --redact --no-banner --log-opts="${RANGE}" .
 
       - name: 🔐 Full history scan (report only)
         continue-on-error: true
-        run: ./gitleaks git --redact --no-banner .
+        run: ./gitleaks git --config .gitleaks.toml --redact --no-banner .
 
       - name: 🐍 Set up Python
         uses: actions/setup-python@v5
