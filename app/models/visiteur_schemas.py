@@ -2,15 +2,17 @@ from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional, List, Dict
 from datetime import datetime
 
+from app.models.constraints import Contact, ShortText
+
 # ============================================
 # SCHEMAS
 # ============================================
 
 class VisiteurCreate(BaseModel):
     """Schéma pour créer un visiteur"""
-    nom: str
-    prenom: str
-    contact: str
+    nom: ShortText
+    prenom: ShortText
+    contact: Contact
 
 
 class VisiteurResponse(BaseModel):

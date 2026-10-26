@@ -1,9 +1,11 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
 
 from app.database import prisma
+from app.utils.auth import RequireAdmin
+from app.utils.rate_limit import rate_limit
 from app.models.visiteur_schemas import VisiteurCreate, VisiteurResponse, VisiteurListResponse
 
 router = APIRouter(prefix="/visiteurs", tags=["Module Visiteurs"])
@@ -13,7 +15,8 @@ router = APIRouter(prefix="/visiteurs", tags=["Module Visiteurs"])
 # ROUTES
 # ============================================
 
-@router.post("", response_model=VisiteurResponse, status_code=201)
+@router.post("", response_model=VisiteurResponse, status_code=201,
+             dependencies=[Depends(rate_limit("visiteurs", 60, 60))])
 async def create_visiteur(data: VisiteurCreate):
     """
     Créer un nouveau visiteur
@@ -40,7 +43,7 @@ async def create_visiteur(data: VisiteurCreate):
     )
 
 
-@router.get("", response_model=VisiteurListResponse)
+@router.get("", response_model=VisiteurListResponse, dependencies=[RequireAdmin])
 async def get_visiteurs(
     search: Optional[str] = Query(None, description="Rechercher par nom ou prénom")
 ):
@@ -77,7 +80,7 @@ async def get_visiteurs(
     )
 
 
-@router.get("/{visiteur_id}", response_model=VisiteurResponse)
+@router.get("/{visiteur_id}", response_model=VisiteurResponse, dependencies=[RequireAdmin])
 async def get_visiteur(visiteur_id: str):
     """Récupérer un visiteur par son ID"""
     
@@ -95,7 +98,7 @@ async def get_visiteur(visiteur_id: str):
     )
 
 
-@router.delete("/{visiteur_id}")
+@router.delete("/{visiteur_id}", dependencies=[RequireAdmin])
 async def delete_visiteur(visiteur_id: str):
     """Supprimer un visiteur"""
     

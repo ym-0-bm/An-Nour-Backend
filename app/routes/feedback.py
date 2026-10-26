@@ -7,6 +7,7 @@ from app.models.feedback_schemas import (
 )
 from app.database import prisma
 from app.utils.auth import get_current_user, RequireAdmin
+from app.utils.rate_limit import rate_limit
 
 router = APIRouter(tags=["Feedback"])
 
@@ -15,7 +16,8 @@ router = APIRouter(tags=["Feedback"])
 # ENDPOINT PUBLIC - SOUMISSION D'AVIS
 # ============================================
 
-@router.post("/feedback", response_model=FeedbackResponse)
+@router.post("/feedback", response_model=FeedbackResponse,
+             dependencies=[Depends(rate_limit("feedback", 30, 60))])
 async def submit_feedback(data: FeedbackCreate, request: Request):
     """
     Soumettre un avis sur le séminaire (endpoint public)
@@ -76,7 +78,7 @@ async def submit_feedback(data: FeedbackCreate, request: Request):
 # ENDPOINTS ADMIN - CRUD
 # ============================================
 
-@router.get("/admin/feedback", response_model=FeedbackListResponse)
+@router.get("/admin/feedback", response_model=FeedbackListResponse, dependencies=[RequireAdmin])
 async def get_all_feedbacks(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
@@ -126,7 +128,7 @@ async def get_all_feedbacks(
     )
 
 
-@router.get("/admin/feedback/analytics", response_model=FeedbackAnalytics)
+@router.get("/admin/feedback/analytics", response_model=FeedbackAnalytics, dependencies=[RequireAdmin])
 async def get_feedback_analytics():
     """
     Récupérer les statistiques agrégées des avis (admin uniquement)
@@ -212,7 +214,7 @@ async def get_feedback_analytics():
     )
 
 
-@router.get("/admin/feedback/{feedback_id}", response_model=FeedbackResponse)
+@router.get("/admin/feedback/{feedback_id}", response_model=FeedbackResponse, dependencies=[RequireAdmin])
 async def get_feedback(feedback_id: str):
     """
     Récupérer un avis par son ID (admin uniquement)
@@ -239,7 +241,7 @@ async def get_feedback(feedback_id: str):
     )
 
 
-@router.delete("/admin/feedback/{feedback_id}")
+@router.delete("/admin/feedback/{feedback_id}", dependencies=[RequireAdmin])
 async def delete_feedback(feedback_id: str):
     """
     Supprimer un avis (admin uniquement)

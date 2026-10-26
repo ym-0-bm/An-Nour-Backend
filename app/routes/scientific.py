@@ -8,6 +8,7 @@ from app.models.scientific_schemas import (NoteUpdate, NoteResponse,
     StatsScientifiques, FormateurCreate, FormateurResponse, FormateurListResponse
 )
 from app.database import prisma
+from app.utils.auth import RequireScientifique, RequireLectureSeminaristes, get_current_user
 
 router = APIRouter(prefix="/scientific", tags=["Module Scientifique"])
 
@@ -16,7 +17,7 @@ router = APIRouter(prefix="/scientific", tags=["Module Scientifique"])
 # LISTE DES SÉMINARISTES (Lecture seule)
 # ============================================
 
-@router.get("/seminaristes")
+@router.get("/seminaristes", dependencies=[RequireLectureSeminaristes])
 async def get_seminaristes(
         page: int = Query(1, ge=1),
         limit: int = Query(20, ge=1, le=100),
@@ -102,12 +103,12 @@ async def get_seminaristes(
 # NOTES (CRUD)
 # ============================================
 
-@router.post("/test-entree", status_code=201)
+@router.post("/test-entree", status_code=201, dependencies=[RequireScientifique])
 async def create_test_entree(
     matricule: str,
     note: float,
     niveau: str,
-    created_by: str = "admin"
+    current_user=Depends(get_current_user)
 ):
     """
     Enregistrer la note du test d'entrée
@@ -150,7 +151,7 @@ async def create_test_entree(
             "note": note,
             "type": "TEST_ENTREE",
             "libelle": "Test de niveau à l'entrée",
-            "created_by": created_by
+            "created_by": current_user.username
         }
     )
 
@@ -161,12 +162,12 @@ async def create_test_entree(
         "niveau": niveau
     }
 
-@router.post("/notes", status_code=201)
+@router.post("/notes", status_code=201, dependencies=[RequireScientifique])
 async def add_note_seminaire(
     matricule: str,
     note: float,
     libelle: Optional[str] = None,
-    created_by: str = "admin"
+    current_user=Depends(get_current_user)
 ):
     if not 0 <= note <= 20:
         raise HTTPException(status_code=400, detail="Note invalide")
@@ -183,11 +184,11 @@ async def add_note_seminaire(
             "note": note,
             "type": "EVALUATION",
             "libelle": libelle,
-            "created_by": created_by
+            "created_by": current_user.username
         }
     )
 
-@router.get("/notes", response_model=List[NoteResponse])
+@router.get("/notes", response_model=List[NoteResponse], dependencies=[RequireScientifique])
 async def get_notes(
         matricule: Optional[str] = None
 ):
@@ -221,7 +222,8 @@ async def get_notes(
 
 @router.get(
     "/seminaristes/{matricule}/notes",
-    response_model=List[NoteResponse]
+    response_model=List[NoteResponse],
+    dependencies=[RequireScientifique]
 )
 async def get_notes_seminariste(matricule: str):
     """Retourne toutes les notes d’un séminariste"""
@@ -256,7 +258,7 @@ async def get_notes_seminariste(matricule: str):
     ]
 
 
-@router.get("/notes/{id}", response_model=NoteResponse)
+@router.get("/notes/{id}", response_model=NoteResponse, dependencies=[RequireScientifique])
 async def get_note(id: str):
     """Détail d'une note"""
 
@@ -275,7 +277,7 @@ async def get_note(id: str):
     }
 
 
-@router.put("/notes/{id}", response_model=NoteResponse)
+@router.put("/notes/{id}", response_model=NoteResponse, dependencies=[RequireScientifique])
 async def update_note(id: str, data: NoteUpdate):
     """Modifier une note"""
 
@@ -297,7 +299,7 @@ async def update_note(id: str, data: NoteUpdate):
     }
 
 
-@router.delete("/notes/{id}")
+@router.delete("/notes/{id}", dependencies=[RequireScientifique])
 async def delete_note(id: str):
     """Supprimer une note"""
 
@@ -313,8 +315,8 @@ async def delete_note(id: str):
 # BULLETINS
 # ============================================
 
-@router.post("/bulletins/generate", response_model=BulletinResponse, status_code=201)
-async def generate_bulletin(data: BulletinGenerate, generated_by: str = "scientifique"):
+@router.post("/bulletins/generate", response_model=BulletinResponse, status_code=201, dependencies=[RequireScientifique])
+async def generate_bulletin(data: BulletinGenerate, current_user=Depends(get_current_user)):
 
     # Récupérer le séminariste avec ses informations
     registration = await prisma.registration.find_unique(
@@ -371,7 +373,7 @@ async def generate_bulletin(data: BulletinGenerate, generated_by: str = "scienti
                 "effectif_classe": effectif,
                 "mention": mention,
                 "observations": data.observations,
-                "generated_by": generated_by
+                "generated_by": current_user.username
             },
             include={"seminariste": True}
         )
@@ -388,7 +390,7 @@ async def generate_bulletin(data: BulletinGenerate, generated_by: str = "scienti
                 "effectif_classe": effectif,
                 "mention": mention,
                 "observations": data.observations,
-                "generated_by": generated_by
+                "generated_by": current_user.username
             },
             include={"seminariste": True}
         )
@@ -402,7 +404,7 @@ async def generate_bulletin(data: BulletinGenerate, generated_by: str = "scienti
     }
 
 
-@router.get("/bulletins/{numero}", response_model=BulletinDetail)
+@router.get("/bulletins/{numero}", response_model=BulletinDetail, dependencies=[RequireScientifique])
 async def get_bulletin(numero: str):
     """Détail complet d'un bulletin avec notes"""
 
@@ -445,7 +447,7 @@ async def get_bulletin(numero: str):
     }
 
 
-@router.get("/bulletins")
+@router.get("/bulletins", dependencies=[RequireScientifique])
 async def get_bulletins(
         matricule: Optional[str] = None,
         annee_scolaire: Optional[str] = None
@@ -476,7 +478,7 @@ async def get_bulletins(
 # FORMATEURS
 # ============================================
 
-@router.post("/Ajouter-formateur", response_model=FormateurResponse, status_code=201)
+@router.post("/Ajouter-formateur", response_model=FormateurResponse, status_code=201, dependencies=[RequireScientifique])
 async def create_formateur(data: FormateurCreate):
     """
     Créer un nouveau formateur
@@ -504,7 +506,7 @@ async def create_formateur(data: FormateurCreate):
     )
 
 
-@router.get("/formateurs", response_model=FormateurListResponse)
+@router.get("/formateurs", response_model=FormateurListResponse, dependencies=[RequireScientifique])
 async def get_formateurs():
     """
     Récupérer la liste de tous les formateurs
@@ -534,7 +536,7 @@ async def get_formateurs():
     )
 
 
-@router.get("/{formateur_id}", response_model=FormateurResponse)
+@router.get("/{formateur_id}", response_model=FormateurResponse, dependencies=[RequireScientifique])
 async def get_formateur(formateur_id: str):
     """
     Récupérer un formateur par son ID
@@ -554,7 +556,7 @@ async def get_formateur(formateur_id: str):
     )
 
 
-@router.delete("/{formateur_id}")
+@router.delete("/{formateur_id}", dependencies=[RequireScientifique])
 async def delete_formateur(formateur_id: str):
     """
     Supprimer un formateur
@@ -579,7 +581,7 @@ async def delete_formateur(formateur_id: str):
 # STATISTIQUES SCIENTIFIQUES
 # ============================================
 
-@router.get("/stats/scientifiques", response_model=StatsScientifiques)
+@router.get("/stats/scientifiques", response_model=StatsScientifiques, dependencies=[RequireScientifique])
 async def get_stats_scientifiques():
     """Statistiques du module scientifique"""
 

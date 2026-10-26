@@ -12,9 +12,10 @@ from app.models.admin_schemas import (
     MembreCOCreate, MembreCOUpdate, MembreCOResponse, MembreCOListResponse
 )
 from app.database import prisma
+from app.utils.rate_limit import limiter, rate_limit, too_many_requests
 from app.utils.auth import (
     get_password_hash, verify_password, create_access_token,
-    get_current_user, RequireAdmin
+    get_current_user, RequireAdmin, RequireAny, RequireLectureSeminaristes, ROLE_ADMIN
 )
 
 router = APIRouter(prefix="/admin", tags=["Administration"])
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/admin", tags=["Administration"])
 # AUTHENTIFICATION
 # ============================================
 
-@router.post("/auth/register", response_model=UserResponse, status_code=201)
+@router.post("/auth/register", response_model=UserResponse, status_code=201, dependencies=[RequireAdmin])
 async def register_user(data: UserCreate):
     """Créer un utilisateur (admin uniquement)"""
 
@@ -56,9 +57,22 @@ async def register_user(data: UserCreate):
     return user
 
 
-@router.post("/auth/login", response_model=Token)
+# Échecs de connexion tolérés par identifiant avant blocage temporaire
+LOGIN_MAX_FAILURES = 5
+LOGIN_FAILURE_WINDOW = 15 * 60
+# Hash factice : un identifiant inconnu coûte le même temps de vérification qu'un mot de passe faux
+_DUMMY_PASSWORD_HASH = get_password_hash("mot-de-passe-factice-anti-enumeration")
+
+
+@router.post("/auth/login", response_model=Token, dependencies=[Depends(rate_limit("login", 10, 60))])
 async def login(data: UserLogin):
     """Connexion avec email/password"""
+
+    # Limite par identifiant tenté (quelle que soit l'IP), en plus de la limite par IP
+    failure_key = f"login-failures:{data.identifier.strip().lower()}"
+    wait = limiter.retry_after(failure_key, LOGIN_MAX_FAILURES, LOGIN_FAILURE_WINDOW)
+    if wait is not None:
+        raise too_many_requests(wait)
 
     # Chercher utilisateur email ou username
 
@@ -71,18 +85,16 @@ async def login(data: UserLogin):
         }
     )
 
-    if not user:
+    # Vérifier mot de passe (même réponse si l'utilisateur n'existe pas)
+    password_ok = verify_password(data.password, user.password if user else _DUMMY_PASSWORD_HASH)
+    if not user or not password_ok:
+        limiter.add(failure_key)
         raise HTTPException(
             status_code=401,
             detail="Email ou mot de passe incorrect"
         )
 
-    # Vérifier mot de passe
-    if not verify_password(data.password, user.password):
-        raise HTTPException(
-            status_code=401,
-            detail="Email ou mot de passe incorrect"
-        )
+    limiter.reset(failure_key)
 
     # Vérifier si actif
     if not user.is_active:
@@ -129,7 +141,7 @@ async def logout(current_user=Depends(get_current_user)):
 # GESTION UTILISATEURS
 # ============================================
 
-@router.get("/users", response_model=List[UserResponse])
+@router.get("/users", response_model=List[UserResponse], dependencies=[RequireAdmin])
 async def get_users(
         role: Optional[str] = None,
         is_active: Optional[bool] = None
@@ -150,7 +162,7 @@ async def get_users(
     return users_sorted
 
 
-@router.get("/users/{user_id}", response_model=UserResponse)
+@router.get("/users/{user_id}", response_model=UserResponse, dependencies=[RequireAdmin])
 async def get_user(user_id: str):
     """Détail d'un utilisateur"""
 
@@ -164,7 +176,8 @@ async def get_user(user_id: str):
 @router.put("/users/{user_id}", response_model=UserResponse)
 async def update_user(
         user_id: str,
-        data: UserUpdate
+        data: UserUpdate,
+        current_user=RequireAdmin
 ):
     """Modifier un utilisateur"""
 
@@ -173,6 +186,23 @@ async def update_user(
         raise HTTPException(status_code=404, detail="Utilisateur non trouvé")
 
     update_data = data.model_dump(exclude_unset=True)
+
+    # Unicité de l'email et du nom d'utilisateur
+    for field, label in (("email", "Cet email est déjà utilisé"), ("username", "Ce nom d'utilisateur est déjà pris")):
+        if field in update_data and update_data[field] != getattr(existing, field):
+            other = await prisma.user.find_unique(where={field: update_data[field]})
+            if other and other.id != user_id:
+                raise HTTPException(status_code=409, detail=label)
+
+    # Un admin ne peut ni se désactiver ni se retirer son propre rôle
+    if user_id == current_user.id and (
+        update_data.get("is_active") is False
+        or update_data.get("role", ROLE_ADMIN) != ROLE_ADMIN
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Vous ne pouvez pas désactiver ou rétrograder votre propre compte"
+        )
 
     # Si mot de passe, le hasher
     if "password" in update_data:
@@ -187,29 +217,31 @@ async def update_user(
 
 
 @router.patch("/users/{user_id}")
-async def delete_user(user_id: str):
-    """Supprimer (désactiver) un utilisateur"""
+async def delete_user(user_id: str, current_user=RequireAdmin):
+    """Activer / désactiver un utilisateur (bascule)"""
 
     existing = await prisma.user.find_unique(where={"id": user_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Utilisateur non trouvé")
 
-    # Ne pas supprimer soi-même
-    # if user_id == current_user.id:
+    # Ne pas désactiver soi-même
+    if user_id == current_user.id:
         raise HTTPException(
             status_code=400,
-            detail="Vous ne pouvez pas supprimer votre propre compte"
+            detail="Vous ne pouvez pas désactiver votre propre compte"
         )
 
     # Désactiver au lieu de supprimer
+    is_active = not existing.is_active
     await prisma.user.update(
         where={"id": user_id},
-        data={"is_active": not existing.is_active}
+        data={"is_active": is_active}
     )
 
     return {
-        "message": "Utilisateur désactivé avec succès",
-        "user_id": user_id
+        "message": "Utilisateur activé avec succès" if is_active else "Utilisateur désactivé avec succès",
+        "user_id": user_id,
+        "is_active": is_active
     }
 
 
@@ -217,7 +249,7 @@ async def delete_user(user_id: str):
 # GESTION SÉMINARISTES (CRUD Admin)
 # ============================================
 
-@router.post("/seminaristes", response_model=SeminaristeResponse, status_code=201)
+@router.post("/seminaristes", response_model=SeminaristeResponse, status_code=201, dependencies=[RequireAdmin])
 async def create_seminariste(
         data: SeminaristeCreate
 ):
@@ -271,7 +303,7 @@ async def create_seminariste(
     }
 
 
-@router.get("/seminaristes/{matricule}", response_model=SeminaristeResponse)
+@router.get("/seminaristes/{matricule}", response_model=SeminaristeResponse, dependencies=[RequireLectureSeminaristes])
 async def get_seminariste_detail(
         matricule: str
 ):
@@ -291,7 +323,7 @@ async def get_seminariste_detail(
     }
 
 
-@router.put("/seminaristes/{matricule}", response_model=SeminaristeResponse)
+@router.put("/seminaristes/{matricule}", response_model=SeminaristeResponse, dependencies=[RequireAdmin])
 async def update_seminariste(
         matricule: str,
         data: SeminaristeUpdate
@@ -349,7 +381,7 @@ async def update_seminariste(
     }
 
 
-@router.delete("/seminaristes/{matricule}")
+@router.delete("/seminaristes/{matricule}", dependencies=[RequireAdmin])
 async def delete_seminariste(
         matricule: str
 ):
@@ -379,7 +411,7 @@ async def delete_seminariste(
 # AUTRES FONCTIONNALITÉS ADMIN
 # ============================================
 # api renvoyant la liste de tous les niveaux académiques, le code et le nom des dortoirs pour les formulaires
-@router.get("/metadata")
+@router.get("/metadata", dependencies=[RequireAny])
 async def get_metadata():
     """Récupérer les métadonnées pour les formulaires admin des données dans l'attribut niveaux_academiques et dortoirs des registations"""
 
@@ -465,7 +497,7 @@ async def get_static_metadata():
 # GESTION MEMBRES CO (Comité d'Organisation)
 # ============================================
 
-@router.post("/membres-co", response_model=MembreCOResponse, status_code=201)
+@router.post("/membres-co", response_model=MembreCOResponse, status_code=201, dependencies=[RequireAdmin])
 async def create_membre_co(data: MembreCOCreate):
     """
     Créer un nouveau membre du Comité d'Organisation
@@ -508,7 +540,7 @@ async def create_membre_co(data: MembreCOCreate):
     )
 
 
-@router.get("/membres-co", response_model=MembreCOListResponse)
+@router.get("/membres-co", response_model=MembreCOListResponse, dependencies=[RequireAdmin])
 async def get_membres_co(
     commission: Optional[str] = None,
     statut: Optional[str] = None
@@ -556,7 +588,7 @@ async def get_membres_co(
     )
 
 
-@router.get("/membres-co/{membre_id}", response_model=MembreCOResponse)
+@router.get("/membres-co/{membre_id}", response_model=MembreCOResponse, dependencies=[RequireAdmin])
 async def get_membre_co(membre_id: str):
     """
     Récupérer un membre du CO par son ID
@@ -581,7 +613,7 @@ async def get_membre_co(membre_id: str):
     )
 
 
-@router.put("/membres-co/{membre_id}", response_model=MembreCOResponse)
+@router.put("/membres-co/{membre_id}", response_model=MembreCOResponse, dependencies=[RequireAdmin])
 async def update_membre_co(membre_id: str, data: MembreCOUpdate):
     """
     Mettre à jour un membre du CO
@@ -618,7 +650,7 @@ async def update_membre_co(membre_id: str, data: MembreCOUpdate):
     )
 
 
-@router.delete("/membres-co/{membre_id}")
+@router.delete("/membres-co/{membre_id}", dependencies=[RequireAdmin])
 async def delete_membre_co(membre_id: str):
     """
     Supprimer un membre du CO

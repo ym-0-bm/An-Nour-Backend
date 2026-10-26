@@ -2,6 +2,8 @@ from pydantic import BaseModel, field_validator
 from typing import Optional, Dict, List
 from datetime import datetime
 
+from app.models.constraints import LongText, OptionalShortText
+
 
 # ============================================
 # CRÉATION D'UN AVIS
@@ -9,8 +11,8 @@ from datetime import datetime
 
 class FeedbackCreate(BaseModel):
     """Schéma pour soumettre un avis"""
-    sexe: Optional[str] = None
-    nom: Optional[str] = None
+    sexe: Optional[OptionalShortText] = None
+    nom: Optional[OptionalShortText] = None
     
     # Notes étoiles (1-5)
     note_globale: int
@@ -27,8 +29,8 @@ class FeedbackCreate(BaseModel):
     recommande: bool
     
     # Commentaires
-    points_apprecies: Optional[str] = None
-    suggestions: Optional[str] = None
+    points_apprecies: Optional[LongText] = None
+    suggestions: Optional[LongText] = None
     
     @field_validator('sexe')
     @classmethod

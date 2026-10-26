@@ -1,6 +1,23 @@
-from pydantic import BaseModel, EmailStr, field_validator
-from typing import Optional, List, Dict
+from pydantic import BaseModel, EmailStr, StringConstraints, field_validator
+from typing import Annotated, Optional, List, Dict
 from datetime import datetime
+
+from app.utils.auth import ROLES, normalize_role
+
+PASSWORD_MIN_LENGTH = 8
+
+
+def _validate_role(value: str) -> str:
+    role = normalize_role(value)
+    if role not in ROLES:
+        raise ValueError(f"Le rôle doit être parmi {list(ROLES)}")
+    return role
+
+
+def _validate_password(value: str) -> str:
+    if len(value) < PASSWORD_MIN_LENGTH:
+        raise ValueError(f"Le mot de passe doit contenir au moins {PASSWORD_MIN_LENGTH} caractères")
+    return value
 
 
 # ============================================
@@ -8,8 +25,8 @@ from datetime import datetime
 # ============================================
 
 class UserLogin(BaseModel):
-    identifier: str  # email OU username
-    password: str
+    identifier: Annotated[str, StringConstraints(min_length=1, max_length=254)]  # email OU username
+    password: Annotated[str, StringConstraints(min_length=1, max_length=128)]
 
 
 class UserCreate(BaseModel):
@@ -18,22 +35,17 @@ class UserCreate(BaseModel):
     password: str
     nom: str
     prenom: str
-    role: str  # "admin", "scientifique", "finance"
+    role: str  # "admin", "scientifique", "finances", "sante"
 
     @field_validator('role')
     @classmethod
     def validate_role(cls, v):
-        valid_roles = ["admin", "scientifique", "finance"]
-        if v not in valid_roles:
-            raise ValueError(f'Le rôle doit être parmi {valid_roles}')
-        return v
+        return _validate_role(v)
 
     @field_validator('password')
     @classmethod
     def validate_password(cls, v):
-        if len(v) < 8:
-            raise ValueError('Le mot de passe doit contenir au moins 8 caractères')
-        return v
+        return _validate_password(v)
 
 
 class UserUpdate(BaseModel):
@@ -44,6 +56,16 @@ class UserUpdate(BaseModel):
     prenom: Optional[str] = None
     role: Optional[str] = None
     is_active: Optional[bool] = None
+
+    @field_validator('role')
+    @classmethod
+    def validate_role(cls, v):
+        return None if v is None else _validate_role(v)
+
+    @field_validator('password')
+    @classmethod
+    def validate_password(cls, v):
+        return None if v is None else _validate_password(v)
 
 
 class UserResponse(BaseModel):
@@ -59,6 +81,11 @@ class UserResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @field_validator('role')
+    @classmethod
+    def canonical_role(cls, v):
+        return normalize_role(v)
 
 
 class Token(BaseModel):
