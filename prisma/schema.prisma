@@ -42,7 +42,13 @@ model Registration {
   dortoir             Dortoir   @relation(fields: [dortoir_code], references: [code])
   allergie            String?   @default("RAS")
   antecedent_medical  String?   @default("Néant")
-  payment_status      String    @default("completed") // "pending", "awaiting_proof", "completed"
+  // "en_attente", "verifie", "rejete", "erreur" ; "completed" = inscriptions antérieures (vérifiées historiquement)
+  payment_status      String    @default("en_attente")
+  payment_verified_at DateTime?
+  payment_verified_by String?   // "ocr" ou nom d'utilisateur (validation manuelle)
+  payment_method      String?   // "ocr" ou "manuel"
+  payment_message     String?   // Dernier message de vérification présenté à l'inscrit
+  receipt_token_hash  String?   // Empreinte du jeton remis à l'inscrit pour envoyer son reçu
   payment_timestamp   DateTime?
   transaction_id      String?
   // qr_code_data        String?   // Chaîne pour générer le QR code
@@ -54,10 +60,12 @@ model Registration {
   receipt_url         String?
   contact_parent      String
   contact_seminariste String?
+  date_naissance      DateTime? // Facultatif : absent des inscriptions antérieures (Partie 6)
 
   bulletins Bulletin[]
   seminaristes Seminariste[]
   notes        Note[]
+  consultations Consultation[]
 
   @@map("registrations")
 }
@@ -279,4 +287,82 @@ model Feedback {
   ip_address            String?  // Pour éviter les doublons
   
   @@map("feedbacks")
+}
+
+// ============================================
+// MODULE SANTÉ (Partie 6)
+// ============================================
+
+model Consultation {
+  id                              String       @id @default(auto()) @map("_id") @db.ObjectId
+  matricule                       String
+  seminariste                     Registration @relation(fields: [matricule], references: [matricule])
+  date_consultation               DateTime
+  medecin_responsable_id          String       @db.ObjectId // Utilisateur actif de rôle "sante"
+  motif_consultation              String
+  observations_diagnostic         String
+  traitement_prescrit             String
+  notes_medicales_supplementaires String?
+  created_by                      String
+  created_at                      DateTime     @default(now())
+  updated_at                      DateTime     @updatedAt
+
+  @@index([matricule])
+  @@map("consultations")
+}
+
+// Traçabilité des accès aux données médicales : ne contient JAMAIS de contenu médical
+model MedicalAccessLog {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  action          String   // READ_FICHE, LIST_CONSULTATIONS, READ_CONSULTATION, CREATE, UPDATE, EXPORT, UPDATE_INFOS
+  matricule       String
+  consultation_id String?
+  fields_changed  String[] // Noms des champs modifiés uniquement
+  user_id         String
+  username        String
+  role            String
+  ip_address      String?
+  created_at      DateTime @default(now())
+
+  @@index([matricule])
+  @@map("medical_access_logs")
+}
+
+// ============================================
+// INSCRIPTIONS : MATRICULES ET PAIEMENTS (Parties 7 et 8)
+// ============================================
+
+// Compteur atomique par préfixe et dortoir (ex. "ANNOUR26-NASSR")
+model MatriculeCounter {
+  id    String @id @default(auto()) @map("_id") @db.ObjectId
+  key   String @unique
+  value Int
+
+  @@map("matricule_counters")
+}
+
+// Une transaction de paiement ne peut valider qu'une seule inscription (index unique)
+model UsedTransaction {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  transaction_id String   @unique
+  matricule      String
+  created_at     DateTime @default(now())
+
+  @@map("used_transactions")
+}
+
+// Historique de chaque tentative de vérification de paiement (OCR ou manuelle)
+model PaymentVerification {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  matricule      String
+  statut         String   // "verifie", "rejete", "erreur"
+  methode        String   // "ocr" ou "manuel"
+  transaction_id String?
+  score          Int?
+  motif          String?
+  verified_by    String
+  created_at     DateTime @default(now())
+
+  @@index([matricule])
+  @@map("payment_verifications")
 }

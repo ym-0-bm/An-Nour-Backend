@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, Request, Depends
+from fastapi import APIRouter, HTTPException, Query, Request, Depends, Response
 from typing import Optional, List
 from datetime import datetime
 import uuid
@@ -13,6 +13,7 @@ from app.models.finance_schemas import (
 from app.database import prisma
 from app.utils.finance_utils import generate_reference, create_inscription_entry
 from app.utils.auth import RequireFinances, get_current_user
+from app.utils.pagination import Page, set_total
 
 router = APIRouter(prefix="/finances", tags=["Module Finances"], dependencies=[RequireFinances])
 
@@ -44,6 +45,34 @@ async def create_audit_log(
             "user_agent": user_agent
         }
     )
+
+
+# Seules les inscriptions au paiement vérifié entrent en finances (B11) ;
+# "completed" = inscriptions antérieures à la vérification obligatoire
+PAIEMENT_VERIFIE = {"payment_status": {"in": ["verifie", "completed"]}}
+
+
+async def sum_montant(where: dict) -> float:
+    """Somme des montants calculée par la base, sans charger les transactions."""
+    rows = await prisma.transaction.group_by(by=["type"], where=where, sum={"montant": True})
+    return sum(row["_sum"]["montant"] or 0 for row in rows)
+
+
+async def with_seminariste_names(transactions) -> list:
+    """Sérialiser les transactions et ajouter nom_seminariste en une seule requête."""
+    matricules = list({t.matricule for t in transactions if t.matricule})
+    names = {}
+    if matricules:
+        registrations = await prisma.registration.find_many(where={"matricule": {"in": matricules}})
+        names = {r.matricule: f"{r.nom} {r.prenom}" for r in registrations}
+
+    data = []
+    for t in transactions:
+        transaction_dict = t.model_dump()
+        if t.matricule in names:
+            transaction_dict["nom_seminariste"] = names[t.matricule]
+        data.append(transaction_dict)
+    return data
 
 
 # ============================================
@@ -177,35 +206,17 @@ async def get_entrees(
     
     total = await prisma.transaction.count(where=where)
     
+    # Tri en base AVANT la pagination (plus récent en premier), sinon chaque page est arbitraire
     skip = (page - 1) * limit
     transactions = await prisma.transaction.find_many(
         where=where,
+        order={"date_transaction": "desc"},
         skip=skip,
         take=limit
     )
     
-    # Trier par date (plus récent en premier)
-    transactions_sorted = sorted(
-        transactions,
-        key=lambda t: t.date_transaction,
-        reverse=True
-    )
-    
-    # Enrichir avec noms séminaristes
-    data = []
-    for t in transactions_sorted:
-        transaction_dict = t.model_dump()
-        if t.matricule:
-            seminariste = await prisma.registration.find_unique(
-                where={"matricule": t.matricule}
-            )
-            if seminariste:
-                transaction_dict["nom_seminariste"] = f"{seminariste.nom} {seminariste.prenom}"
-        data.append(transaction_dict)
-    
-    # Calculer total montant
-    all_entrees = await prisma.transaction.find_many(where=where)
-    total_montant = sum(t.montant for t in all_entrees)
+    data = await with_seminariste_names(transactions)
+    total_montant = await sum_montant(where)
     
     return {
         "total": total,
@@ -339,36 +350,17 @@ async def get_sorties(
     # Compter total
     total = await prisma.transaction.count(where=where)
 
-    # Récupérer données
+    # Récupérer données (tri en base avant la pagination, plus récent en premier)
     skip = (page - 1) * limit
     transactions = await prisma.transaction.find_many(
         where=where,
+        order={"date_transaction": "desc"},
         skip=skip,
         take=limit
     )
 
-    # Trier par date (plus récent en premier)
-    transactions_sorted = sorted(
-        transactions,
-        key=lambda t: t.date_transaction,
-        reverse=True
-    )
-
-    # Enrichir avec noms séminaristes
-    data = []
-    for t in transactions_sorted:
-        transaction_dict = t.model_dump()
-        if t.matricule:
-            seminariste = await prisma.registration.find_unique(
-                where={"matricule": t.matricule}
-            )
-            if seminariste:
-                transaction_dict["nom_seminariste"] = f"{seminariste.nom} {seminariste.prenom}"
-        data.append(transaction_dict)
-
-    # Calculer totaux
-    all_sorties = await prisma.transaction.find_many(where=where)
-    total_sorties = sum(t.montant for t in all_sorties)
+    data = await with_seminariste_names(transactions)
+    total_sorties = await sum_montant(where)
 
     return {
         "total": total,
@@ -534,30 +526,16 @@ async def get_deleted_sorties(
 
     total = await prisma.transaction.count(where=where)
 
+    # Tri en base par date de suppression (plus récente en premier) avant la pagination
     skip = (page - 1) * limit
     transactions = await prisma.transaction.find_many(
         where=where,
+        order={"deleted_at": "desc"},
         skip=skip,
         take=limit
     )
 
-    # Trier par date suppression
-    transactions_sorted = sorted(
-        transactions,
-        key=lambda t: t.deleted_at if t.deleted_at else datetime.min,
-        reverse=True
-    )
-
-    data = []
-    for t in transactions_sorted:
-        transaction_dict = t.model_dump()
-        if t.matricule:
-            seminariste = await prisma.registration.find_unique(
-                where={"matricule": t.matricule}
-            )
-            if seminariste:
-                transaction_dict["nom_seminariste"] = f"{seminariste.nom} {seminariste.prenom}"
-        data.append(transaction_dict)
+    data = await with_seminariste_names(transactions)
 
     return {
         "total": total,
@@ -659,81 +637,60 @@ async def get_dashboard():
     - Répartition pour graphiques
     """
     
-    # Récupérer toutes les transactions actives
-    all_transactions = await prisma.transaction.find_many(
-        where={"is_deleted": False}
+    # Totaux par type et catégorie calculés par la base (sans charger toutes les transactions)
+    groups = await prisma.transaction.group_by(
+        by=["type", "categorie"],
+        where={"is_deleted": False},
+        sum={"montant": True},
+        count=True
     )
-    
-    entrees = [t for t in all_transactions if t.type == "ENTREE"]
-    sorties = [t for t in all_transactions if t.type == "SORTIE"]
-    
-    # Calculer par catégorie d'entrée
-    inscriptions = [t for t in entrees if t.categorie == "Inscription"]
-    dons = [t for t in entrees if t.categorie == "Don"]
-    ventes = [t for t in entrees if t.categorie == "Vente"]
-    autres = [t for t in entrees if t.categorie not in ["Inscription", "Don", "Vente"]]
-    
-    inscriptions_data = {
-        "count": len(inscriptions),
-        "montant": sum(t.montant for t in inscriptions)
-    }
-    dons_data = {
-        "count": len(dons),
-        "montant": sum(t.montant for t in dons)
-    }
-    ventes_data = {
-        "count": len(ventes),
-        "montant": sum(t.montant for t in ventes)
-    }
-    autres_data = {
-        "count": len(autres),
-        "montant": sum(t.montant for t in autres)
-    }
-    
-    sorties_data = {
-        "count": len(sorties),
-        "montant": sum(t.montant for t in sorties)
-    }
-    
-    total_entrees = sum(t.montant for t in entrees)
-    total_sorties = sum(t.montant for t in sorties)
-    solde = total_entrees - total_sorties
-    
-    # Transactions récentes (10 dernières)
-    transactions_sorted = sorted(
-        all_transactions,
-        key=lambda t: t.date_transaction,
-        reverse=True
-    )[:10]
-    
-    transactions_recentes = []
-    for t in transactions_sorted:
-        trans_dict = {
-            "reference": t.reference,
-            "type": t.type,
-            "categorie": t.categorie,
-            "montant": t.montant,
-            "libelle": t.libelle,
-            "date_transaction": t.date_transaction.isoformat(),
-            "mode_paiement": t.mode_paiement
+
+    def bucket(type_, categories=None, exclude=None):
+        rows = [g for g in groups if g["type"] == type_
+                and (categories is None or g["categorie"] in categories)
+                and (exclude is None or g["categorie"] not in exclude)]
+        return {
+            "count": sum(g["_count"]["_all"] for g in rows),
+            "montant": sum(g["_sum"]["montant"] or 0 for g in rows)
         }
-        if t.matricule:
-            seminariste = await prisma.registration.find_unique(
-                where={"matricule": t.matricule}
-            )
-            if seminariste:
-                trans_dict["nom_seminariste"] = f"{seminariste.nom} {seminariste.prenom}"
-        transactions_recentes.append(trans_dict)
-    
+
+    inscriptions_data = bucket("ENTREE", ["Inscription"])
+    dons_data = bucket("ENTREE", ["Don"])
+    ventes_data = bucket("ENTREE", ["Vente"])
+    autres_data = bucket("ENTREE", exclude=["Inscription", "Don", "Vente"])
+    sorties_data = bucket("SORTIE")
+
+    total_entrees = bucket("ENTREE")["montant"]
+    total_sorties = sorties_data["montant"]
+    solde = total_entrees - total_sorties
+
+    # Transactions récentes (10 dernières), triées et limitées en base
+    recentes = await prisma.transaction.find_many(
+        where={"is_deleted": False},
+        order={"date_transaction": "desc"},
+        take=10
+    )
+    transactions_recentes = [
+        {
+            "reference": t["reference"],
+            "type": t["type"],
+            "categorie": t["categorie"],
+            "montant": t["montant"],
+            "libelle": t["libelle"],
+            "date_transaction": t["date_transaction"].isoformat(),
+            "mode_paiement": t["mode_paiement"],
+            **({"nom_seminariste": t["nom_seminariste"]} if "nom_seminariste" in t else {})
+        }
+        for t in await with_seminariste_names(recentes)
+    ]
+
     # Répartition pour graphiques
     repartition_entrees = {}
-    for t in entrees:
-        repartition_entrees[t.categorie] = repartition_entrees.get(t.categorie, 0) + t.montant
-    
     repartition_sorties = {}
-    for t in sorties:
-        repartition_sorties[t.categorie] = repartition_sorties.get(t.categorie, 0) + t.montant
-    
+    for g in groups:
+        target = repartition_entrees if g["type"] == "ENTREE" else repartition_sorties
+        target[g["categorie"]] = target.get(g["categorie"], 0) + (g["_sum"]["montant"] or 0)
+
     return {
         "inscriptions": inscriptions_data,
         "dons": dons_data,
@@ -766,11 +723,12 @@ async def generate_rapport(data: RapportGenerate, current_user=Depends(get_curre
         "is_deleted": False
     }
 
-    transactions = await prisma.transaction.find_many(where=where)
-
-    # Calculer totaux
-    total_entrees = sum(t.montant for t in transactions if t.type == "ENTREE")
-    total_sorties = sum(t.montant for t in transactions if t.type == "SORTIE")
+    # Totaux calculés par la base
+    groups = await prisma.transaction.group_by(by=["type"], where=where, sum={"montant": True}, count=True)
+    totals = {g["type"]: g for g in groups}
+    total_entrees = (totals.get("ENTREE") or {}).get("_sum", {}).get("montant") or 0
+    total_sorties = (totals.get("SORTIE") or {}).get("_sum", {}).get("montant") or 0
+    nb_transactions = sum(g["_count"]["_all"] for g in groups)
     solde = total_entrees - total_sorties
 
     # Générer numéro unique
@@ -788,7 +746,7 @@ async def generate_rapport(data: RapportGenerate, current_user=Depends(get_curre
             "total_entrees": total_entrees,
             "total_sorties": total_sorties,
             "solde": solde,
-            "nb_transactions": len(transactions),
+            "nb_transactions": nb_transactions,
             "generated_by": current_user.username,
             "commentaires": data.commentaires
         }
@@ -799,8 +757,10 @@ async def generate_rapport(data: RapportGenerate, current_user=Depends(get_curre
 
 @router.get("/rapports", response_model=List[RapportResponse])
 async def get_rapports(
+        response: Response,
         type_rapport: Optional[str] = None,
-        annee: Optional[int] = None
+        annee: Optional[int] = None,
+        page: Page = Depends()
 ):
     """Liste des rapports"""
 
@@ -815,16 +775,10 @@ async def get_rapports(
             "lt": datetime(annee + 1, 1, 1)
         }
 
-    rapports = await prisma.rapportfinancier.find_many(where=where)
-
-    # Trier par date génération
-    rapports_sorted = sorted(
-        rapports,
-        key=lambda r: r.generated_at,
-        reverse=True
+    set_total(response, await prisma.rapportfinancier.count(where=where))
+    return await prisma.rapportfinancier.find_many(
+        where=where, order={"generated_at": "desc"}, skip=page.skip, take=page.limit
     )
-
-    return rapports_sorted
 
 
 @router.get("/rapports/{numero}", response_model=RapportDetail)
@@ -862,19 +816,9 @@ async def get_rapport_detail(numero: str):
     for t in sorties:
         categories_sorties[t.categorie] = categories_sorties.get(t.categorie, 0) + t.montant
 
-    # Enrichir transactions avec noms
-    async def enrich_transaction(t):
-        result = t.model_dump()
-        if t.matricule:
-            seminariste = await prisma.registration.find_unique(
-                where={"matricule": t.matricule}
-            )
-            if seminariste:
-                result["nom_seminariste"] = f"{seminariste.nom} {seminariste.prenom}"
-        return result
-
-    entrees_enriched = [await enrich_transaction(t) for t in entrees]
-    sorties_enriched = [await enrich_transaction(t) for t in sorties]
+    # Enrichir transactions avec noms (une seule requête)
+    entrees_enriched = await with_seminariste_names(entrees)
+    sorties_enriched = await with_seminariste_names(sorties)
 
     return {
         "rapport": rapport.model_dump(),
@@ -903,7 +847,7 @@ async def sync_all_inscriptions(
     """
     
     # Récupérer toutes les inscriptions
-    registrations = await prisma.registration.find_many()
+    registrations = await prisma.registration.find_many(where=PAIEMENT_VERIFIE)
     
     # Récupérer les matricules déjà synchronisés
     existing_transactions = await prisma.transaction.find_many(
@@ -961,6 +905,8 @@ async def sync_single_inscription(
     
     if not registration:
         raise HTTPException(status_code=404, detail="Inscription non trouvée")
+    if registration.payment_status not in ("verifie", "completed"):
+        raise HTTPException(status_code=409, detail="Paiement non vérifié : aucune entrée financière")
     
     result = await create_inscription_entry(
         matricule=registration.matricule,
@@ -985,18 +931,15 @@ async def get_sync_status():
     Vérifier l'état de synchronisation entre inscriptions et finances.
     """
     
-    total_registrations = await prisma.registration.count()
+    total_registrations = await prisma.registration.count(where=PAIEMENT_VERIFIE)
     
-    synced_transactions = await prisma.transaction.find_many(
-        where={
-            "categorie": "Inscription",
-            "matricule": {"not": None},
-            "is_deleted": False
-        }
-    )
-    synced_count = len(synced_transactions)
-    
-    total_amount = sum(t.montant for t in synced_transactions)
+    synced_where = {
+        "categorie": "Inscription",
+        "matricule": {"not": None},
+        "is_deleted": False
+    }
+    synced_count = await prisma.transaction.count(where=synced_where)
+    total_amount = await sum_montant(synced_where)
     
     return {
         "total_registrations": total_registrations,

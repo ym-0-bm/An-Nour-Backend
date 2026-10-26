@@ -28,6 +28,8 @@ PUBLIC_ROUTES = {
     ("GET", f"{API}/registrations/alldortoirs"),
     ("POST", f"{API}/feedback"),
     ("POST", f"{API}/visiteurs"),
+    # Envoi du reçu par l'inscrit : protégé par le jeton remis à l'inscription (Partie 8)
+    ("POST", f"{API}/registrations/{{matricule}}/receipt"),
     ("GET", "/"),
     ("GET", "/health"),
 }
@@ -42,6 +44,8 @@ SPECIFIC_RULES = {
     ("GET", f"{API}/registrations/{{identifier}}"): LECTURE_SEMINARISTES,
     ("GET", f"{API}/registrations/stats/global"): LECTURE_SEMINARISTES,
     ("GET", f"{API}/scientific/seminaristes"): LECTURE_SEMINARISTES,
+    ("GET", f"{API}/registrations/{{matricule}}/paiement"): {ADMIN, FIN},
+    ("PATCH", f"{API}/registrations/{{matricule}}/paiement"): {ADMIN, FIN},
 }
 
 
@@ -54,6 +58,8 @@ def expected_access(method, path):
         return {ADMIN, FIN}
     if path.startswith(f"{API}/scientific/"):
         return {ADMIN, SCI}
+    if path.startswith(f"{API}/sante/"):
+        return {ADMIN, SANTE}  # décision Partie 6 : accès complet sante + admin
     return {ADMIN}
 
 
@@ -68,7 +74,7 @@ def all_routes():
 
 ROUTES = list(all_routes())
 # Nombre de routes de l'API au moment de la Partie 2 (à ajuster quand une route est ajoutée/retirée)
-MIN_EXPECTED_ROUTES = 75
+MIN_EXPECTED_ROUTES = 87  # 75 + 8 Santé (Partie 6) + 4 paiement/export (Partie 8)
 PROTECTED = [(m, r) for m, r in ROUTES if expected_access(m, r.path) is not None]
 ROUTE_IDS = [f"{m} {r.path}" for m, r in ROUTES]
 PROTECTED_IDS = [f"{m} {r.path}" for m, r in PROTECTED]

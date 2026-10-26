@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Depends
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Depends, Response
+from openpyxl import Workbook
 from typing import Optional, List
 from datetime import datetime, timedelta
 import io
@@ -12,6 +13,7 @@ from app.models.admin_schemas import (
     MembreCOCreate, MembreCOUpdate, MembreCOResponse, MembreCOListResponse
 )
 from app.database import prisma
+from app.utils.pagination import Page, set_total
 from app.utils.rate_limit import limiter, rate_limit, too_many_requests
 from app.utils.auth import (
     get_password_hash, verify_password, create_access_token,
@@ -143,8 +145,10 @@ async def logout(current_user=Depends(get_current_user)):
 
 @router.get("/users", response_model=List[UserResponse], dependencies=[RequireAdmin])
 async def get_users(
+        response: Response,
         role: Optional[str] = None,
-        is_active: Optional[bool] = None
+        is_active: Optional[bool] = None,
+        page: Page = Depends()
 ):
     """Liste des utilisateurs"""
 
@@ -154,12 +158,10 @@ async def get_users(
     if is_active is not None:
         where["is_active"] = is_active
 
-    users = await prisma.user.find_many(where=where)
-
-    # Trier par nom
-    users_sorted = sorted(users, key=lambda u: (u.nom, u.prenom))
-
-    return users_sorted
+    set_total(response, await prisma.user.count(where=where))
+    return await prisma.user.find_many(
+        where=where, order=[{"nom": "asc"}, {"prenom": "asc"}], skip=page.skip, take=page.limit
+    )
 
 
 @router.get("/users/{user_id}", response_model=UserResponse, dependencies=[RequireAdmin])
@@ -411,6 +413,58 @@ async def delete_seminariste(
 # AUTRES FONCTIONNALITÉS ADMIN
 # ============================================
 # api renvoyant la liste de tous les niveaux académiques, le code et le nom des dortoirs pour les formulaires
+# ============================================
+# EXPORT EXCEL DES SÉMINARISTES (B12)
+# ============================================
+
+EXPORT_COLUMNS = [
+    ("Matricule", "matricule"), ("Nom", "nom"), ("Prénom", "prenom"), ("Sexe", "sexe"), ("Âge", "age"),
+    ("Niveau académique", "niveau_academique"), ("Niveau du séminaire", "niveau"), ("Dortoir", "dortoir"),
+    ("Commune", "commune_habitation"), ("Contact parent", "contact_parent"),
+    ("Contact séminariste", "contact_seminariste"), ("Statut du paiement", "payment_status"),
+    ("Date d'inscription", "registration_date"),
+]
+
+
+def _excel_safe(value):
+    """Neutralise l'injection de formules : une cellule commençant par = + - @ serait exécutée par Excel."""
+    if isinstance(value, str) and value[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + value
+    return value
+
+
+@router.get("/export/seminaristes.xlsx", dependencies=[RequireAdmin])
+async def export_seminaristes_excel():
+    """Export Excel des séminaristes (admin). Les données médicales ne sont pas exportées."""
+    registrations = await prisma.registration.find_many(
+        include={"dortoir": True, "seminaristes": True},
+        order={"matricule": "asc"}
+    )
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Séminaristes"
+    sheet.append([titre for titre, _ in EXPORT_COLUMNS])
+    for r in registrations:
+        valeurs = {
+            **r.model_dump(),
+            "niveau": r.seminaristes[0].niveau if r.seminaristes else None,
+            "dortoir": r.dortoir.name if r.dortoir else r.dortoir_code,
+            "payment_status": "verifie_historique" if r.payment_status == "completed" else r.payment_status,
+            "registration_date": r.registration_date.replace(tzinfo=None) if r.registration_date else None,
+        }
+        sheet.append([_excel_safe(valeurs.get(champ)) for _, champ in EXPORT_COLUMNS])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    nom_fichier = f"seminaristes_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nom_fichier}"'},
+    )
+
+
 @router.get("/metadata", dependencies=[RequireAny])
 async def get_metadata():
     """Récupérer les métadonnées pour les formulaires admin des données dans l'attribut niveaux_academiques et dortoirs des registations"""
@@ -542,8 +596,10 @@ async def create_membre_co(data: MembreCOCreate):
 
 @router.get("/membres-co", response_model=MembreCOListResponse, dependencies=[RequireAdmin])
 async def get_membres_co(
+    response: Response,
     commission: Optional[str] = None,
-    statut: Optional[str] = None
+    statut: Optional[str] = None,
+    page: Page = Depends()
 ):
     """
     Récupérer la liste de tous les membres du CO
@@ -560,10 +616,15 @@ async def get_membres_co(
         where["statut"] = statut
     
     # Récupérer tous les membres du CO
-    membres = await prisma.membreco.find_many(where=where)
+    total = await prisma.membreco.count(where=where)
+    set_total(response, total)
+    membres = await prisma.membreco.find_many(
+        where=where, order=[{"commission": "asc"}, {"nom": "asc"}, {"prenoms": "asc"}],
+        skip=page.skip, take=page.limit
+    )
     
     # Trier par commission puis nom
-    membres_sorted = sorted(membres, key=lambda m: (m.commission, m.nom, m.prenoms))
+    membres_sorted = membres
     
     # Formater la réponse
     data = [
@@ -583,7 +644,7 @@ async def get_membres_co(
     ]
     
     return MembreCOListResponse(
-        total=len(data),
+        total=total,
         data=data
     )
 

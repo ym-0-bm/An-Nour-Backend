@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
@@ -6,6 +6,7 @@ from datetime import datetime
 from app.database import prisma
 from app.utils.auth import RequireAdmin
 from app.utils.rate_limit import rate_limit
+from app.utils.pagination import Page, set_total
 from app.models.visiteur_schemas import VisiteurCreate, VisiteurResponse, VisiteurListResponse
 
 router = APIRouter(prefix="/visiteurs", tags=["Module Visiteurs"])
@@ -45,7 +46,9 @@ async def create_visiteur(data: VisiteurCreate):
 
 @router.get("", response_model=VisiteurListResponse, dependencies=[RequireAdmin])
 async def get_visiteurs(
-    search: Optional[str] = Query(None, description="Rechercher par nom ou prénom")
+    response: Response,
+    search: Optional[str] = Query(None, description="Rechercher par nom ou prénom"),
+    page: Page = Depends()
 ):
     """
     Récupérer la liste de tous les visiteurs
@@ -58,10 +61,11 @@ async def get_visiteurs(
             {"prenom": {"contains": search, "mode": "insensitive"}},
         ]
     
-    visiteurs = await prisma.visiteur.find_many(where=where if where else None)
-    
-    # Trier par date (plus récent en premier)
-    visiteurs_sorted = sorted(visiteurs, key=lambda v: v.created_at, reverse=True)
+    total = await prisma.visiteur.count(where=where)
+    set_total(response, total)
+    visiteurs_sorted = await prisma.visiteur.find_many(
+        where=where, order={"created_at": "desc"}, skip=page.skip, take=page.limit
+    )
     
     data = [
         VisiteurResponse(
@@ -75,7 +79,7 @@ async def get_visiteurs(
     ]
     
     return VisiteurListResponse(
-        total=len(data),
+        total=total,
         data=data
     )
 

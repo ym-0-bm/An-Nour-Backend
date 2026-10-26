@@ -1,6 +1,6 @@
-from pydantic import BaseModel, Field, StringConstraints, field_validator
-from typing import Annotated, Optional, List
-from datetime import datetime
+from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
+from typing import Annotated, Literal, Optional, List
+from datetime import date, datetime
 
 from app.models.constraints import (
     ShortText, OptionalShortText, Contact, OptionalContact, LongText, Identifier, Url
@@ -17,6 +17,7 @@ class PersonalInfo(BaseModel):
     communeAutre: Optional[OptionalShortText] = ""
     contactParent: Contact
     contactSeminariste: Optional[OptionalContact] = ""
+    dateNaissance: Optional[date] = None  # Facultatif (Partie 6)
 
 
 class DormitoryInfo(BaseModel):
@@ -52,6 +53,9 @@ class RegistrationCreate(BaseModel):
             raise ValueError('Nous n\'acceptons pas les séminaristes de moins de 5 ans')
         elif age > 100:
             raise ValueError('Nous n\'acceptons pas les séminaristes de plus de 100 ans')
+
+        if v.dateNaissance is not None and not (date(1900, 1, 1) <= v.dateNaissance <= date.today()):
+            raise ValueError('Date de naissance invalide')
 
         return v
 
@@ -103,3 +107,38 @@ class PaginatedResponse(BaseModel):
     page: int
     limit: int
     data: List[RegistrationResponse]
+
+
+# ============================================
+# PAIEMENT : VÉRIFICATION OBLIGATOIRE DU REÇU (B9 / B11)
+# ============================================
+
+class RegistrationCreatedResponse(RegistrationResponse):
+    # Jeton à conserver par l'inscrit : seul moyen d'envoyer son reçu (affiché une seule fois)
+    verification_token: str
+
+
+class PaymentStatusResponse(BaseModel):
+    matricule: str
+    statut: str   # "en_attente", "verifie", "rejete", "erreur", "verifie_historique"
+    message: Optional[str] = None
+
+
+class PaymentDetailResponse(PaymentStatusResponse):
+    methode: Optional[str] = None
+    verified_by: Optional[str] = None
+    verified_at: Optional[datetime] = None
+    transaction_id: Optional[str] = None
+    historique: List[dict] = []
+
+
+class ManualPaymentDecision(BaseModel):
+    decision: Literal["verifie", "rejete"]
+    transaction_id: Optional[Identifier] = None
+    motif: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=500)]
+
+    @model_validator(mode="after")
+    def transaction_required_for_validation(self):
+        if self.decision == "verifie" and not self.transaction_id:
+            raise ValueError("transaction_id est obligatoire pour valider un paiement")
+        return self

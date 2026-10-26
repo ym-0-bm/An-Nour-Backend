@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query, Depends, Response
 from typing import Optional, List
-from app.utils.bulletin import calculer_moyenne, get_mention, calculer_rangs
+from app.utils.bulletin import LIBELLES, analyser_notes, get_mention, calculer_rangs
 from datetime import datetime
 
 from app.models.scientific_schemas import (NoteUpdate, NoteResponse,
@@ -8,9 +8,13 @@ from app.models.scientific_schemas import (NoteUpdate, NoteResponse,
     StatsScientifiques, FormateurCreate, FormateurResponse, FormateurListResponse
 )
 from app.database import prisma
+from app.utils.pagination import Page, set_total
 from app.utils.auth import RequireScientifique, RequireLectureSeminaristes, get_current_user
 
 router = APIRouter(prefix="/scientific", tags=["Module Scientifique"])
+
+# Une moyenne = 4 notes de poids égal (test d'entrée + 3 évaluations)
+NOTES_PAR_MOYENNE = len(LIBELLES)
 
 
 # ============================================
@@ -190,7 +194,9 @@ async def add_note_seminaire(
 
 @router.get("/notes", response_model=List[NoteResponse], dependencies=[RequireScientifique])
 async def get_notes(
-        matricule: Optional[str] = None
+        response: Response,
+        matricule: Optional[str] = None,
+        page: Page = Depends()
 ):
     """Liste des notes avec filtres"""
 
@@ -198,9 +204,13 @@ async def get_notes(
     if matricule:
         where["matricule"] = matricule
 
+    set_total(response, await prisma.note.count(where=where))
     notes = await prisma.note.find_many(
         where=where,
-        include={"seminariste": True}
+        include={"seminariste": True},
+        order={"created_at": "asc"},
+        skip=page.skip,
+        take=page.limit
     )
 
     return [
@@ -348,10 +358,19 @@ async def generate_bulletin(data: BulletinGenerate, current_user=Depends(get_cur
             detail="Aucune note d'évaluation trouvée"
         )
 
-    moyenne = calculer_moyenne(notes)
+    # B6 : une note manquante ou invalide n'est jamais comptée comme zéro → bulletin refusé
+    analyse = analyser_notes(notes)
+    if analyse["statut"] != "complet":
+        problemes = [f"{LIBELLES[k]} manquant(e)" for k in analyse["notes_manquantes"]]
+        problemes += [f"{LIBELLES[k]} invalide" for k in analyse["notes_invalides"]]
+        raise HTTPException(
+            status_code=422,
+            detail=f"Bulletin impossible, notes incomplètes : {', '.join(problemes)}"
+        )
+    moyenne = analyse["moyenne"]
     mention = get_mention(moyenne)
 
-    # Calculer le rang parmi les séminaristes du même niveau
+    # B7 : rang parmi les séminaristes du même niveau ayant une moyenne complète (ex aequo partagés)
     rangs, effectif = await calculer_rangs(niveau)
     rang = rangs.get(data.matricule)
 
@@ -368,7 +387,7 @@ async def generate_bulletin(data: BulletinGenerate, current_user=Depends(get_cur
             where={"numero": numero},
             data={
                 "moyenne_generale": moyenne,
-                "total_coefficient": len(notes),
+                "total_coefficient": NOTES_PAR_MOYENNE,
                 "rang": rang,
                 "effectif_classe": effectif,
                 "mention": mention,
@@ -385,7 +404,7 @@ async def generate_bulletin(data: BulletinGenerate, current_user=Depends(get_cur
                 "matricule": data.matricule,
                 "annee_scolaire": data.annee_scolaire,
                 "moyenne_generale": moyenne,
-                "total_coefficient": len(notes),
+                "total_coefficient": NOTES_PAR_MOYENNE,
                 "rang": rang,
                 "effectif_classe": effectif,
                 "mention": mention,
@@ -429,11 +448,12 @@ async def get_bulletin(numero: str):
             "nom_seminariste": bulletin.seminariste.nom,
             "prenom_seminariste": bulletin.seminariste.prenom
         },
+        # B5 : le modèle n'a pas de matière (décision B6 : pas de coefficients)
         "notes": [
             {
-                **note.model_dump(),
-                "nom_matiere": note.matiere.nom,
-                "coefficient": note.matiere.coefficient
+                **note.model_dump(exclude={"seminariste"}),
+                "nom_seminariste": bulletin.seminariste.nom,
+                "prenom_seminariste": bulletin.seminariste.prenom
             }
             for note in notes
         ],
@@ -449,8 +469,10 @@ async def get_bulletin(numero: str):
 
 @router.get("/bulletins", dependencies=[RequireScientifique])
 async def get_bulletins(
+        response: Response,
         matricule: Optional[str] = None,
-        annee_scolaire: Optional[str] = None
+        annee_scolaire: Optional[str] = None,
+        page: Page = Depends()
 ):
     """Liste des bulletins"""
 
@@ -460,9 +482,13 @@ async def get_bulletins(
     if annee_scolaire:
         where["annee_scolaire"] = annee_scolaire
 
+    set_total(response, await prisma.bulletin.count(where=where))
     bulletins = await prisma.bulletin.find_many(
         where=where,
-        include={"seminariste": True}
+        include={"seminariste": True},
+        order={"generated_at": "desc"},
+        skip=page.skip,
+        take=page.limit
     )
 
     return [

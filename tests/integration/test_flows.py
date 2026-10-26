@@ -51,22 +51,49 @@ def test_deactivated_account_is_rejected_immediately(api, seed_user, login, mong
     assert api.get(f"{API}/admin/auth/me", headers=other_headers).status_code == 403
 
 
-def test_public_registration_creates_finance_entry_and_rejects_reused_receipt(api, seed_dortoir, mongo_db):
+def verify_payment(api, headers, matricule, transaction_id="TX-INTEG-0001", motif="Relevé Wave contrôlé (fictif)"):
+    """Validation manuelle du paiement (admin ou finances)."""
+    response = api.patch(f"{API}/registrations/{matricule}/paiement",
+                         json={"decision": "verifie", "transaction_id": transaction_id, "motif": motif}, headers=headers)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def register_and_verify(api, headers, transaction_id="TX-INTEG-0001", **kwargs):
+    """Inscription publique puis validation du paiement : entrée financière créée."""
+    response = api.post(f"{API}/registrations", json=registration_body(transaction_id, **kwargs))
+    assert response.status_code == 201, response.text
+    matricule = response.json()["matricule"]
+    verify_payment(api, headers, matricule, transaction_id)
+    return matricule
+
+
+def test_registration_is_pending_until_payment_verified(api, seed_dortoir, seed_user, login, mongo_db):
     seed_dortoir(capacity=10)
+    fin = login(seed_user("fin.integ", "finances"))
 
     response = api.post(f"{API}/registrations", json=registration_body())
     assert response.status_code == 201, response.text
     matricule = response.json()["matricule"]
+    assert response.json()["payment_status"] == "en_attente"
 
     registration = mongo_db.registrations.find_one({"matricule": matricule})
     assert registration["transaction_id"] == "TX-INTEG-0001"
     assert mongo_db.dortoirs.find_one({"code": "DTEST"})["current_count"] == 1
+    # B11 : aucune entrée financière tant que le paiement n'est pas vérifié
+    assert mongo_db.transactions.count_documents({"matricule": matricule}) == 0
 
+    verify_payment(api, fin, matricule)
     # Écriture financière au tarif du serveur, jamais au montant envoyé par le client (1)
     entry = mongo_db.transactions.find_one({"matricule": matricule})
     assert entry["type"] == "ENTREE"
     assert entry["montant"] == float(settings.REGISTRATION_FEE)
 
+    detail = api.get(f"{API}/registrations/{matricule}/paiement", headers=fin).json()
+    assert (detail["statut"], detail["methode"], detail["verified_by"]) == ("verifie", "manuel", "fin.integ")
+    assert detail["historique"][0]["motif"] == "Relevé Wave contrôlé (fictif)"
+
+    # Transaction déjà utilisée : refusée dès la déclaration
     duplicate = api.post(f"{API}/registrations", json=registration_body(nom="Autre"))
     assert duplicate.status_code == 409
     assert mongo_db.registrations.count_documents({}) == 1
