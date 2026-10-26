@@ -1,0 +1,19 @@
+# Configuration gitleaks (CI) : règles par défaut + valeurs non secrètes connues
+title = "An-Nour backend"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Valeurs fictives (tests, CI) ou publiques, sans valeur secrète"
+# Valeurs exactes uniquement : un vrai secret ajouté dans les mêmes fichiers reste détecté.
+regexes = [
+  # Empreinte SHA-256 de l'ancienne clé JWT par défaut, déjà publique (refusée par app/config.py)
+  '''^869885f9f45a0e201f35b957e1e28c2cfe013b4d185ef4301ebfaf2cdef5c424$''',
+  # Clé JWT fictive des tests (tests/conftest.py)
+  '''^test-only-secret-key-0123456789abcdef$''',
+  # Clé JWT fictive du CI (.github/workflows/deploy.yml)
+  '''^ci-test-only-secret-key-not-used-anywhere-else$''',
+  # Marqueur de test vérifiant qu'aucun détail interne ne fuit (tests/test_endpoints.py)
+  '''^detail-interne-confidentiel-42$''',
+]
