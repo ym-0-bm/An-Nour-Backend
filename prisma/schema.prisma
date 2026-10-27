@@ -246,6 +246,7 @@ model User {
   prenom     String
   role       String   // "admin", "scientifique", "finances", "consultation"
   is_active  Boolean  @default(true)
+  token_version Int?   // B19 : incrémenté pour révoquer les tokens émis (absent = 0)
   last_login DateTime?
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt

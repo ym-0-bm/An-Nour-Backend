@@ -1,14 +1,17 @@
+import logging
+
 from prisma import Prisma
-from contextlib import asynccontextmanager
+
+logger = logging.getLogger(__name__)
 
 prisma = Prisma()
 
 async def connect_db():
     """Connecter à la base de données MongoDB"""
     await prisma.connect()
-    print("✅ MongoDB connecté ")
+    logger.info("MongoDB connecté")
 
 async def disconnect_db():
     """Déconnecter de MongoDB"""
     await prisma.disconnect()
-    print("❌ MongoDB déconnecté")
+    logger.info("MongoDB déconnecté")

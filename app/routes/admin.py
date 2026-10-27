@@ -12,12 +12,15 @@ from app.models.admin_schemas import (
     BadgeGenerate, DiplomeGenerate, ListePDFGenerate,
     MembreCOCreate, MembreCOUpdate, MembreCOResponse, MembreCOListResponse
 )
+from prisma.errors import UniqueViolationError
+
 from app.database import prisma
 from app.utils.pagination import Page, set_total
 from app.utils.rate_limit import limiter, rate_limit, too_many_requests
 from app.utils.auth import (
     get_password_hash, verify_password, create_access_token,
-    get_current_user, RequireAdmin, RequireAny, RequireLectureSeminaristes, ROLE_ADMIN
+    get_current_user, RequireAdmin, RequireAny, RequireLectureSeminaristes, ROLE_ADMIN,
+    normalize_role, revoke_sessions, token_version
 )
 
 router = APIRouter(prefix="/admin", tags=["Administration"])
@@ -116,7 +119,8 @@ async def login(data: UserLogin):
         data={
             "sub": user.id,
             "email": user.email,
-            "role": user.role
+            "role": user.role,
+            "ver": token_version(user)  # B19 : version de session
         }
     )
 
@@ -137,6 +141,23 @@ async def get_current_user_info(current_user=Depends(get_current_user)):
 async def logout(current_user=Depends(get_current_user)):
     """Déconnexion (côté client : supprimer le token)"""
     return {"message": "Déconnexion réussie"}
+
+
+@router.post("/auth/logout-all")
+async def logout_all(current_user=Depends(get_current_user)):
+    """Déconnecter toutes les sessions de l'utilisateur (tous appareils)"""
+    await revoke_sessions(current_user)
+    return {"message": "Toutes les sessions ont été fermées"}
+
+
+@router.post("/users/{user_id}/revoke-sessions", dependencies=[RequireAdmin])
+async def revoke_user_sessions(user_id: str):
+    """Fermer toutes les sessions d'un utilisateur (ex. appareil perdu, compte compromis)"""
+    user = await prisma.user.find_unique(where={"id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="Utilisateur non trouvé")
+    await revoke_sessions(user)
+    return {"message": "Sessions de l'utilisateur fermées", "user_id": user_id}
 
 
 # ============================================
@@ -215,6 +236,13 @@ async def update_user(
         data=update_data
     )
 
+    # B19 : changement de mot de passe, de rôle ou désactivation → anciens tokens invalidés
+    if ("password" in update_data
+            or ("role" in update_data and normalize_role(update_data["role"]) != normalize_role(existing.role))
+            or update_data.get("is_active") is False):
+        await revoke_sessions(existing)
+        user = await prisma.user.find_unique(where={"id": user_id})
+
     return user
 
 
@@ -235,6 +263,8 @@ async def delete_user(user_id: str, current_user=RequireAdmin):
 
     # Désactiver au lieu de supprimer
     is_active = not existing.is_active
+    if not is_active:
+        await revoke_sessions(existing)  # B19
     await prisma.user.update(
         where={"id": user_id},
         data={"is_active": is_active}
@@ -262,10 +292,6 @@ async def create_seminariste(
     if not dortoir:
         raise HTTPException(status_code=404, detail="Dortoir non trouvé")
 
-    # Vérifier capacité
-    if dortoir.current_count >= dortoir.capacity:
-        raise HTTPException(status_code=409, detail="Dortoir complet")
-
     # Vérifier genre
     if dortoir.gender != data.sexe:
         raise HTTPException(
@@ -273,25 +299,38 @@ async def create_seminariste(
             detail=f"Ce dortoir est réservé au genre {dortoir.gender}"
         )
 
-    # Générer matricule
+    # B10 : réservation atomique d'une place (comme l'inscription publique)
+    reserved = await prisma.dortoir.update_many(
+        where={"code": dortoir.code, "current_count": {"lt": dortoir.capacity}},
+        data={"current_count": {"increment": 1}},
+    )
+    if not reserved:
+        raise HTTPException(status_code=409, detail="Dortoir complet")
+
     from app.utils.matricule_generator import generate_matricule
-    matricule = await generate_matricule(data.dortoir_code)
-
-    # Créer séminariste
-    seminariste = await prisma.registration.create(
-        data={
-            **data.model_dump(),
-            "matricule": matricule,
-            "payment_status": "completed",
-            "validated": True
-        }
-    )
-
-    # Incrémenter compteur dortoir
-    await prisma.dortoir.update(
-        where={"code": data.dortoir_code},
-        data={"current_count": {"increment": 1}}
-    )
+    seminariste = None
+    try:
+        # B8 : nouvel essai si un matricule concurrent vient d'être pris (index unique)
+        for _ in range(3):
+            matricule = await generate_matricule(data.dortoir_code)
+            try:
+                seminariste = await prisma.registration.create(
+                    data={
+                        **data.model_dump(),
+                        "matricule": matricule,
+                        # Création manuelle par un admin : paiement considéré comme vérifié (historique)
+                        "payment_status": "completed",
+                        "validated": True
+                    }
+                )
+                break
+            except UniqueViolationError:
+                continue
+        if seminariste is None:
+            raise HTTPException(status_code=503, detail="Création momentanément impossible, veuillez réessayer")
+    finally:
+        if seminariste is None:
+            await prisma.dortoir.update(where={"code": dortoir.code}, data={"current_count": {"decrement": 1}})
 
     # Récupérer avec relations
     result = await prisma.registration.find_unique(

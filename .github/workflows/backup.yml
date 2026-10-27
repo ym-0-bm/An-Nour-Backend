@@ -1,0 +1,53 @@
+name: Sauvegarde MongoDB
+
+# B15 : sauvegarde quotidienne chiffrée de la base de production.
+# Secrets requis (Settings → Secrets and variables → Actions) :
+#   BACKUP_DATABASE_URL : URI d'un utilisateur Atlas en LECTURE SEULE
+#   BACKUP_CERT_PEM     : certificat public (scripts/backup/generate_keys.sh) ; la clé privée reste hors ligne
+# Procédure de restauration : docs/SAUVEGARDE_RESTAURATION.md
+
+on:
+  schedule:
+    - cron: "30 2 * * *"   # tous les jours à 02:30 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Sauvegarde chiffrée
+    # Version figée : le dépôt APT MongoDB ci-dessous est celui d'Ubuntu 24.04 (noble)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🧰 Install MongoDB Database Tools
+        run: |
+          curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
+          echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/8.0 multiverse" \
+            | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
+          sudo apt-get update
+          sudo apt-get install -y mongodb-database-tools
+          mongodump --version | head -1
+
+      - name: 💾 Dump and encrypt
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          BACKUP_CERT_PEM: ${{ secrets.BACKUP_CERT_PEM }}
+        run: bash scripts/backup/backup.sh backup-out
+
+      - name: 📦 Upload encrypted backup (30 days)
+        uses: actions/upload-artifact@v4
+        with:
+          name: annour-backup-${{ github.run_id }}
+          path: backup-out/
+          retention-days: 30
+          if-no-files-found: error
