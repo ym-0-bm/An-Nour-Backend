@@ -132,6 +132,24 @@ jobs:
       - name: 🧪 Run integration tests
         run: pytest -q tests/integration --no-cov
 
+      # B18 : l'image Docker démarre sous un utilisateur non-root et répond /health avec la base
+      - name: 🐳 Docker image smoke test (non-root)
+        run: |
+          docker build -t annour-backend:ci .
+          docker run -d --name api --network host             -e DATABASE_URL="$INTEGRATION_DATABASE_URL" -e ENVIRONMENT=test             -e SECRET_KEY="$SECRET_KEY" -e CLOUDINARY_CLOUD_NAME=t -e CLOUDINARY_API_KEY=t -e CLOUDINARY_API_SECRET=t             annour-backend:ci
+          for i in $(seq 1 30); do
+            [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/health)" = "200" ] && break
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:8000/health
+          uid=$(docker exec api id -u)
+          echo "UID du processus : $uid"
+          [ "$uid" != "0" ]
+
+      - name: 📋 API container log (on failure)
+        if: failure()
+        run: docker logs api 2>&1 | tail -n 100 || true
+
       - name: 📋 MongoDB log (on failure)
         if: failure()
         run: tail -n 100 "$RUNNER_TEMP/mongod.log" || true

@@ -452,3 +452,27 @@ def test_cors_allows_known_origin_only(client):
 
 def test_media_directory_is_not_served(client):
     assert client.get("/media/participants_photos/.gitkeep").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# B16 / B17 : santé du service et journalisation
+# ---------------------------------------------------------------------------
+
+def test_health_checks_the_database(client):
+    # Sans base connectée (tests unitaires) : 503, sans détail interne
+    response = client.get("/health")
+    assert response.status_code == 503
+    assert response.json() == {"status": "unhealthy", "database": "unavailable", "version": app.version}
+
+
+def test_liveness_does_not_need_the_database(client):
+    assert client.get("/health/live").json() == {"status": "alive"}
+
+
+def test_access_log_never_contains_query_string(client, caplog):
+    import logging
+    with caplog.at_level(logging.INFO, logger="app.access"):
+        response = client.get(f"{API}/visiteurs", params={"search": "NomConfidentiel"})
+    access = [r for r in caplog.records if r.name == "app.access"]
+    assert access and all("NomConfidentiel" not in r.getMessage() and "?" not in r.getMessage() for r in access)
+    assert access[-1].request_id == response.headers["x-request-id"]

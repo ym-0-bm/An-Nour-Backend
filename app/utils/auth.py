@@ -2,7 +2,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 import re
 import jwt
-from passlib.context import CryptContext
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import hashlib
@@ -31,8 +32,9 @@ ROLE_ALIASES = {
 
 OBJECT_ID_PATTERN = re.compile(r"^[0-9a-fA-F]{24}$")
 
-# Hash passwords
-pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+# Hash des mots de passe : argon2id (mêmes paramètres et même format que l'ancien passlib,
+# les hash existants restent valides)
+password_hasher = PasswordHasher()
 
 # Bearer token (auto_error=False : un token absent renvoie 401 et non 403)
 security = HTTPBearer(auto_error=False)
@@ -49,14 +51,28 @@ def normalize_role(role: Optional[str]) -> Optional[str]:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Vérifier un mot de passe"""
     sha = hashlib.sha256(plain_password.encode("utf-8")).hexdigest()
-    return pwd_context.verify(sha, hashed_password)
+    try:
+        return password_hasher.verify(hashed_password, sha)
+    except (VerificationError, InvalidHashError):
+        return False
 
 
 def get_password_hash(password: str) -> str:
     """Hasher un mot de passe"""
     # Pré-hash SHA-256 → longueur fixe
     sha = hashlib.sha256(password.encode("utf-8")).hexdigest()
-    return pwd_context.hash(sha)
+    return password_hasher.hash(sha)
+
+
+def token_version(user) -> int:
+    """Version de session de l'utilisateur (absente = 0, cas des comptes existants)."""
+    return getattr(user, "token_version", None) or 0
+
+
+async def revoke_sessions(user) -> None:
+    """B19 : invalide immédiatement tous les tokens déjà émis pour cet utilisateur."""
+    from app.database import prisma
+    await prisma.user.update(where={"id": user.id}, data={"token_version": token_version(user) + 1})
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
@@ -112,6 +128,10 @@ async def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Compte désactivé"
         )
+
+    # B19 : un token émis avant une révocation (mot de passe, rôle, désactivation...) est refusé
+    if payload.get("ver", 0) != token_version(user):
+        raise _unauthorized("Session expirée, veuillez vous reconnecter")
 
     # Le rôle fait foi depuis la base (jamais depuis le token), sous sa forme canonique
     return user.model_copy(update={"role": normalize_role(user.role)})

@@ -71,3 +71,8 @@ htmlcov/
 # Backup files
 *.bak
 backup/
+# Sauvegardes (B15) : jamais de clé privée ni d archive dans le dépôt
+backup_private_key.pem
+*.archive.gz.cms
+*.archive.gz.cms.sha256
+backup-out/

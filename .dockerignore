@@ -45,3 +45,8 @@ logs/
 # Backup files
 *.bak
 backup/
+
+# Tests (inutiles dans l image)
+tests
+.coverage
+coverage.xml

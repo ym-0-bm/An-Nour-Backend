@@ -12,8 +12,11 @@ from app.database import prisma
 from app.main import app
 from app.utils.auth import (
     ALGORITHM, ROLES, SECRET_KEY, create_access_token,
-    get_password_hash, normalize_role,
+    get_password_hash, normalize_role, verify_password,
 )
+
+# Hash argon2id généré par passlib 1.7.4 avant B21 (mot de passe fictif)
+LEGACY_PASSLIB_HASH = "$argon2id$v=19$m=65536,t=3,p=4$au3du/eeMwZASEmJEUKoFQ$cz6qhWvzlyfHDrXhpDBq1NcIrbSxTLt5tkUmFPz1ev0"
 
 API = "/api/v1"
 ADMIN, SCI, FIN, SANTE = "admin", "scientifique", "finances", "sante"
@@ -32,12 +35,14 @@ PUBLIC_ROUTES = {
     ("POST", f"{API}/registrations/{{matricule}}/receipt"),
     ("GET", "/"),
     ("GET", "/health"),
+    ("GET", "/health/live"),
 }
 ANY = "any"
 LECTURE_SEMINARISTES = {ADMIN, SCI, SANTE}
 SPECIFIC_RULES = {
     ("GET", f"{API}/admin/auth/me"): ANY,
     ("POST", f"{API}/admin/auth/logout"): ANY,
+    ("POST", f"{API}/admin/auth/logout-all"): ANY,
     ("GET", f"{API}/admin/metadata"): ANY,
     ("GET", f"{API}/admin/seminaristes/{{matricule}}"): LECTURE_SEMINARISTES,
     ("GET", f"{API}/registrations"): LECTURE_SEMINARISTES,
@@ -74,7 +79,7 @@ def all_routes():
 
 ROUTES = list(all_routes())
 # Nombre de routes de l'API au moment de la Partie 2 (à ajuster quand une route est ajoutée/retirée)
-MIN_EXPECTED_ROUTES = 87  # 75 + 8 Santé (Partie 6) + 4 paiement/export (Partie 8)
+MIN_EXPECTED_ROUTES = 90  # 75 + 8 Santé + 4 paiement/export + 2 sessions (B19) + /health/live
 PROTECTED = [(m, r) for m, r in ROUTES if expected_access(m, r.path) is not None]
 ROUTE_IDS = [f"{m} {r.path}" for m, r in ROUTES]
 PROTECTED_IDS = [f"{m} {r.path}" for m, r in PROTECTED]
@@ -310,10 +315,65 @@ def test_admin_can_toggle_other_account(client, fake_users):
     response = client.patch(f"{API}/admin/users/{IDS['other_admin']}", headers=auth(ADMIN))
     assert response.status_code == 200
     assert response.json()["is_active"] is False
-    assert fake_users.updates == [(IDS["other_admin"], {"is_active": False})]
+    # B19 : la désactivation révoque aussi les sessions existantes
+    assert fake_users.updates == [(IDS["other_admin"], {"token_version": 1}), (IDS["other_admin"], {"is_active": False})]
 
     response = client.patch(f"{API}/admin/users/{IDS['other_admin']}", headers=auth(ADMIN))
     assert response.json()["is_active"] is True
+
+
+def other_admin_token(fake_users, ver=None):
+    claims = {"sub": IDS["other_admin"]}
+    if ver is not None:
+        claims["ver"] = ver
+    return {"Authorization": f"Bearer {create_access_token(claims)}"}
+
+
+def test_legacy_token_without_version_stays_valid(client, fake_users):
+    # Tokens émis avant B19 (sans "ver") : valides tant qu'aucune révocation n'a eu lieu
+    assert client.get(f"{API}/admin/auth/me", headers=other_admin_token(fake_users)).status_code == 200
+
+
+@pytest.mark.parametrize("action", ["password", "role", "deactivate", "logout_all", "admin_revoke"])
+def test_sensitive_changes_revoke_existing_tokens(client, fake_users, action):
+    old = other_admin_token(fake_users, ver=0)
+    assert client.get(f"{API}/admin/auth/me", headers=old).status_code == 200
+    target = f"{API}/admin/users/{IDS['other_admin']}"
+    if action == "password":
+        client.put(target, json={"password": "nouveau-mdp-fictif"}, headers=auth(ADMIN))
+    elif action == "role":
+        client.put(target, json={"role": "finances"}, headers=auth(ADMIN))
+    elif action == "deactivate":
+        client.patch(target, headers=auth(ADMIN))
+        fake_users.users[IDS["other_admin"]] = fake_users.users[IDS["other_admin"]].model_copy(update={"is_active": True})
+    elif action == "logout_all":
+        assert client.post(f"{API}/admin/auth/logout-all", headers=old).status_code == 200
+    else:
+        assert client.post(f"{target}/revoke-sessions", headers=auth(ADMIN)).status_code == 200
+
+    response = client.get(f"{API}/admin/auth/me", headers=old)
+    assert response.status_code == 401
+    assert client.get(f"{API}/admin/auth/me", headers=other_admin_token(fake_users, ver=1)).status_code == 200
+
+
+def test_non_sensitive_change_keeps_sessions(client, fake_users):
+    old = other_admin_token(fake_users, ver=0)
+    client.put(f"{API}/admin/users/{IDS['other_admin']}", json={"nom": "Renommé"}, headers=auth(ADMIN))
+    assert client.get(f"{API}/admin/auth/me", headers=old).status_code == 200
+
+
+def test_login_token_carries_session_version(client, fake_users):
+    fake_users.users[IDS["legacy"]] = fake_users.users[IDS["legacy"]].model_copy(update={"token_version": 3})
+    user = fake_users.users[IDS["legacy"]]
+    token = client.post(f"{API}/admin/auth/login", json={"identifier": user.email, "password": "motdepasse-fictif"}).json()["access_token"]
+    assert jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])["ver"] == 3
+
+
+def test_passlib_hashes_remain_valid():
+    # Hash produit par l'ancienne bibliothèque passlib (argon2id) pour le mot de passe fictif "motdepasse-fictif"
+    assert verify_password("motdepasse-fictif", LEGACY_PASSLIB_HASH)
+    assert not verify_password("mauvais", LEGACY_PASSLIB_HASH)
+    assert not verify_password("motdepasse-fictif", "pas-un-hash")
 
 
 def test_deactivated_user_loses_access_immediately(client, fake_users):

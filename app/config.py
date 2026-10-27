@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from pydantic import Field, ValidationError, field_validator, model_validator
-from pydantic_settings import BaseSettings, NoDecode, SettingsError
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict, SettingsError
 
 # Empreinte SHA-256 de l'ancienne clé JWT par défaut (publique dans l'historique Git) : toujours refusée
 LEGACY_SECRET_KEY_SHA256 = "869885f9f45a0e201f35b957e1e28c2cfe013b4d185ef4301ebfaf2cdef5c424"
@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     MATRICULE_PREFIX: str = Field(default="ANNOUR", pattern=r"^[A-Z]{2,12}$")
     MATRICULE_YEAR: Optional[int] = Field(default=None, ge=2000, le=2099)
 
+    # Journalisation (B17)
+    LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+
     # Téléversements d'images (reçus, photos)
     MAX_UPLOAD_BYTES: int = Field(default=5 * 1024 * 1024, gt=0)
 
@@ -50,12 +53,10 @@ class Settings(BaseSettings):
     CLOUDINARY_API_KEY: str
     CLOUDINARY_API_SECRET: str
 
-    class Config:
-        # Check for Render's secret file location first, then local .env
-        env_file = (
-            "/etc/secrets/.env" if Path("/etc/secrets/.env").exists()
-            else ".env"
-        )
+    # Fichier secret de Render en priorité, sinon .env local (les variables d'environnement priment)
+    model_config = SettingsConfigDict(
+        env_file="/etc/secrets/.env" if Path("/etc/secrets/.env").exists() else ".env"
+    )
 
     @field_validator("SECRET_KEY")
     @classmethod
