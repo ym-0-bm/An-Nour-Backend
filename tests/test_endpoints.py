@@ -476,3 +476,43 @@ def test_access_log_never_contains_query_string(client, caplog):
     access = [r for r in caplog.records if r.name == "app.access"]
     assert access and all("NomConfidentiel" not in r.getMessage() and "?" not in r.getMessage() for r in access)
     assert access[-1].request_id == response.headers["x-request-id"]
+
+
+# ---------------------------------------------------------------------------
+# T3 : source de l'IP client derrière le proxy
+# ---------------------------------------------------------------------------
+
+def fake_request(headers, host="10.0.0.1"):
+    return SimpleNamespace(headers=headers, client=SimpleNamespace(host=host))
+
+
+@pytest.mark.parametrize("source,expected", [
+    ("forwarded_last", "203.0.113.7"),
+    ("forwarded_first", "1.2.3.4"),
+    ("cf-connecting-ip", "198.51.100.5"),
+    ("true-client-ip", "198.51.100.6"),
+    ("direct", "10.0.0.1"),
+])
+def test_client_ip_source_is_configurable(monkeypatch, source, expected):
+    from app.utils import rate_limit
+    monkeypatch.setattr(rate_limit.settings, "CLIENT_IP_SOURCE", source)
+    headers = {"x-forwarded-for": "1.2.3.4, 203.0.113.7", "cf-connecting-ip": "198.51.100.5",
+               "true-client-ip": "198.51.100.6"}
+    assert rate_limit.client_ip(fake_request(headers)) == expected
+
+
+def test_missing_configured_header_falls_back_to_direct_peer(monkeypatch):
+    from app.utils import rate_limit
+    monkeypatch.setattr(rate_limit.settings, "CLIENT_IP_SOURCE", "cf-connecting-ip")
+    assert rate_limit.client_ip(fake_request({})) == "10.0.0.1"
+
+
+def test_client_ip_diagnostic_for_admin(client):
+    from tests.test_auth import auth
+    response = client.get("/api/v1/admin/diagnostic/client-ip", headers={**auth("admin"),
+                          "X-Forwarded-For": "1.2.3.4, 203.0.113.7", "CF-Connecting-IP": "198.51.100.5"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source_actuelle"] == "forwarded_last" and body["ip_retenue"] == "203.0.113.7"
+    assert body["candidats"]["forwarded_first"] == "1.2.3.4"
+    assert body["candidats"]["cf-connecting-ip"] == "198.51.100.5"

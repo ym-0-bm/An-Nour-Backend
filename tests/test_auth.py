@@ -79,7 +79,7 @@ def all_routes():
 
 ROUTES = list(all_routes())
 # Nombre de routes de l'API au moment de la Partie 2 (à ajuster quand une route est ajoutée/retirée)
-MIN_EXPECTED_ROUTES = 90  # 75 + 8 Santé + 4 paiement/export + 2 sessions (B19) + /health/live
+MIN_EXPECTED_ROUTES = 92  # 75 + 8 Santé + 4 paiement/export + 2 sessions (B19) + /health/live + diagnostic IP (T3) + recalcul bulletins (T6)
 PROTECTED = [(m, r) for m, r in ROUTES if expected_access(m, r.path) is not None]
 ROUTE_IDS = [f"{m} {r.path}" for m, r in ROUTES]
 PROTECTED_IDS = [f"{m} {r.path}" for m, r in PROTECTED]

@@ -1,22 +1,30 @@
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Depends, Response
+from fastapi import APIRouter, HTTPException, Depends, Request, Response
 from openpyxl import Workbook
 from typing import Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime
 import io
 # import pandas as pd
 
 from app.models.admin_schemas import (
-    UserLogin, UserCreate, UserUpdate, UserResponse, Token,
-    SeminaristeCreate, SeminaristeUpdate, SeminaristeResponse,
-    DashboardStats, ImportResult, ExportParams,
-    BadgeGenerate, DiplomeGenerate, ListePDFGenerate,
-    MembreCOCreate, MembreCOUpdate, MembreCOResponse, MembreCOListResponse
+    UserLogin,
+    UserCreate,
+    UserUpdate,
+    UserResponse,
+    Token,
+    SeminaristeCreate,
+    SeminaristeUpdate,
+    SeminaristeResponse,
+    MembreCOCreate,
+    MembreCOUpdate,
+    MembreCOResponse,
+    MembreCOListResponse
 )
 from prisma.errors import UniqueViolationError
 
 from app.database import prisma
 from app.utils.pagination import Page, set_total
-from app.utils.rate_limit import limiter, rate_limit, too_many_requests
+from app.config import settings
+from app.utils.rate_limit import client_ip, client_ip_candidates, limiter, rate_limit, too_many_requests
 from app.utils.auth import (
     get_password_hash, verify_password, create_access_token,
     get_current_user, RequireAdmin, RequireAny, RequireLectureSeminaristes, ROLE_ADMIN,
@@ -502,6 +510,25 @@ async def export_seminaristes_excel():
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{nom_fichier}"'},
     )
+
+
+# ============================================
+# DIAGNOSTIC : IP CLIENT DERRIÈRE LE PROXY (T3)
+# ============================================
+
+@router.get("/diagnostic/client-ip", dependencies=[RequireAdmin])
+async def diagnostic_client_ip(request: Request):
+    """
+    Montre ce que l'API reçoit pour identifier l'appelant (l'admin lui-même) et l'IP que donnerait chaque
+    source. À appeler depuis deux réseaux différents : la bonne source donne deux IP publiques distinctes,
+    égales à celles de l'appelant, et ne change pas si l'appelant ajoute un faux X-Forwarded-For.
+    """
+    return {
+        "source_actuelle": settings.CLIENT_IP_SOURCE,
+        "ip_retenue": client_ip(request),
+        "candidats": client_ip_candidates(request),
+        "x_forwarded_for": request.headers.get("x-forwarded-for"),
+    }
 
 
 @router.get("/metadata", dependencies=[RequireAny])

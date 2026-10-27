@@ -6,7 +6,7 @@ from app.models.feedback_schemas import (
     FeedbackListResponse, FeedbackAnalytics
 )
 from app.database import prisma
-from app.utils.auth import get_current_user, RequireAdmin
+from app.utils.auth import RequireAdmin
 from app.utils.rate_limit import rate_limit
 
 router = APIRouter(tags=["Feedback"])

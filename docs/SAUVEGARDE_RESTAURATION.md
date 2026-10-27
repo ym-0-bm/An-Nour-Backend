@@ -18,8 +18,16 @@ Une fuite de l'artefact ou du secret GitHub ne permet pas de lire les données :
 2. Copier le contenu de `backup_public_cert.pem` dans le secret GitHub **`BACKUP_CERT_PEM`**.
 3. Mettre `backup_private_key.pem` **hors ligne** puis l'effacer du poste. Ne jamais la committer.
 4. Dans Atlas, créer un utilisateur **en lecture seule** (`read` sur la base) et placer son URI dans le
-   secret **`BACKUP_DATABASE_URL`**. Autoriser l'accès réseau depuis GitHub Actions (liste d'accès Atlas).
-5. Lancer le workflow à la main (*Actions → Sauvegarde MongoDB → Run workflow*) et vérifier l'artefact.
+   secret **`BACKUP_DATABASE_URL`**.
+5. **Accès réseau des runners GitHub (sans ouvrir 0.0.0.0/0)** : les IP des runners changent à chaque exécution.
+   Le workflow ajoute donc l'IP du runner à la liste d'accès Atlas **pour 1 heure au plus** (`deleteAfterDate`),
+   attend qu'elle soit active, fait la sauvegarde, puis **la retire**, même en cas d'échec.
+   - Atlas → *Project Settings* → *Access Manager* → *Applications* → *API Keys* : créer une clé de projet avec le
+     **seul** rôle **Project Network Access Manager**.
+   - Secrets GitHub : `ATLAS_PUBLIC_KEY`, `ATLAS_PRIVATE_KEY`, `ATLAS_PROJECT_ID` (*Project Settings* → *Project ID*).
+   - Si l'organisation exige une liste d'accès pour l'API d'administration, cette exigence s'applique aussi
+     à la clé : la désactiver pour cette clé ou passer par un runner à IP fixe.
+6. Lancer le workflow à la main (*Actions → Sauvegarde MongoDB → Run workflow*) et vérifier l'artefact.
 
 ## Restauration
 

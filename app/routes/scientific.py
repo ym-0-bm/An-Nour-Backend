@@ -1,7 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, Depends, Response
 from typing import Optional, List
-from app.utils.bulletin import LIBELLES, analyser_notes, get_mention, calculer_rangs
-from datetime import datetime
+from app.utils.bulletin import LIBELLES, analyser_notes, get_mention, calculer_rangs, rafraichir_rangs_annee
 
 from app.models.scientific_schemas import (NoteUpdate, NoteResponse,
     BulletinGenerate, BulletinResponse, BulletinDetail,
@@ -414,12 +413,53 @@ async def generate_bulletin(data: BulletinGenerate, current_user=Depends(get_cur
             include={"seminariste": True}
         )
 
+    # T6 : les rangs des autres bulletins de l'année bougent avec celui-ci
+    await rafraichir_rangs_annee(data.annee_scolaire)
+
     return {
         **bulletin.model_dump(),
         "nom_seminariste": bulletin.seminariste.nom,
         "prenom_seminariste": bulletin.seminariste.prenom,
         "niveau": niveau,
         "niveau_academique": registration.niveau_academique
+    }
+
+
+@router.post("/bulletins/recalculer", dependencies=[RequireScientifique])
+async def recalculer_bulletins(annee_scolaire: str = Query(..., min_length=1, max_length=50)):
+    """
+    T6 : recalcule moyennes, mentions et rangs de tous les bulletins d'une année à partir des notes
+    actuelles (utile après une correction de notes). Un séminariste dont les notes sont devenues
+    incomplètes garde son bulletin mais perd son rang ; il est signalé dans la réponse.
+    """
+    bulletins = await prisma.bulletin.find_many(where={"annee_scolaire": annee_scolaire})
+    if not bulletins:
+        raise HTTPException(status_code=404, detail="Aucun bulletin pour cette année")
+
+    notes = await prisma.note.find_many(where={"matricule": {"in": [b.matricule for b in bulletins]}})
+    notes_par_matricule = {}
+    for note in notes:
+        notes_par_matricule.setdefault(note.matricule, []).append(note)
+
+    incomplets, moyennes_modifiees = [], 0
+    for b in bulletins:
+        analyse = analyser_notes(notes_par_matricule.get(b.matricule, []))
+        if analyse["statut"] != "complet":
+            incomplets.append(b.matricule)
+            continue
+        if analyse["moyenne"] != b.moyenne_generale:
+            await prisma.bulletin.update(
+                where={"id": b.id},
+                data={"moyenne_generale": analyse["moyenne"], "mention": get_mention(analyse["moyenne"])}
+            )
+            moyennes_modifiees += 1
+
+    return {
+        "annee_scolaire": annee_scolaire,
+        "bulletins": len(bulletins),
+        "moyennes_modifiees": moyennes_modifiees,
+        "rangs_modifies": await rafraichir_rangs_annee(annee_scolaire),
+        "incomplets": sorted(incomplets),
     }
 
 

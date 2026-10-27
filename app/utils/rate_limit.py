@@ -11,6 +11,8 @@ from typing import Callable, Deque, Dict, Optional
 
 from fastapi import HTTPException, Request, status
 
+from app.config import settings
+
 # Nombre de clés au-delà duquel les entrées expirées sont purgées
 _PURGE_THRESHOLD = 10_000
 
@@ -62,17 +64,26 @@ class RateLimiter:
 limiter = RateLimiter()
 
 
+def client_ip_candidates(request: Request) -> dict:
+    """IP du client selon chaque source possible (diagnostic T3)."""
+    forwarded = [ip.strip() for ip in request.headers.get("x-forwarded-for", "").split(",") if ip.strip()]
+    return {
+        "forwarded_last": forwarded[-1] if forwarded else None,
+        "forwarded_first": forwarded[0] if forwarded else None,
+        "cf-connecting-ip": request.headers.get("cf-connecting-ip"),
+        "true-client-ip": request.headers.get("true-client-ip"),
+        "direct": request.client.host if request.client else None,
+    }
+
+
 def client_ip(request: Request) -> str:
     """
-    IP du client. Derrière le proxy Render, la dernière entrée de X-Forwarded-For est ajoutée
-    par le proxy lui-même ; les entrées précédentes peuvent être forgées par le client.
+    IP du client selon CLIENT_IP_SOURCE. Par défaut, la dernière entrée de X-Forwarded-For (ajoutée par
+    le proxy) : les précédentes peuvent être forgées par le client. Si la source choisie est absente,
+    repli sur la connexion directe.
     """
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        last = forwarded.split(",")[-1].strip()
-        if last:
-            return last
-    return request.client.host if request.client else "inconnu"
+    candidates = client_ip_candidates(request)
+    return candidates.get(settings.CLIENT_IP_SOURCE) or candidates["direct"] or "inconnu"
 
 
 def too_many_requests(retry_after: int) -> HTTPException:

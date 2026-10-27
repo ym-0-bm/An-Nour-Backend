@@ -1,14 +1,21 @@
 from fastapi import APIRouter, HTTPException, Query, Request, Depends, Response
 from typing import Optional, List
 from datetime import datetime
-import uuid
 
 from app.models.finance_schemas import (
-    TransactionCreate, TransactionUpdate, TransactionDelete, TransactionResponse,
-    AuditLogResponse, RapportGenerate, RapportResponse, RapportDetail,
+    TransactionDelete,
+    TransactionResponse,
+    AuditLogResponse,
+    RapportGenerate,
+    RapportResponse,
+    RapportDetail,
     PaginatedTransactions,
-    EntreeDonCreate, EntreeVenteCreate, DashboardFinance, PaginatedEntrees,
-    SortieCreate, SortieUpdate
+    EntreeDonCreate,
+    EntreeVenteCreate,
+    DashboardFinance,
+    PaginatedEntrees,
+    SortieCreate,
+    SortieUpdate
 )
 from app.database import prisma
 from app.utils.finance_utils import generate_reference, create_inscription_entry

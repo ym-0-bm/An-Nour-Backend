@@ -1,0 +1,2 @@
+# Scripts shell : toujours LF (bash échoue sur CRLF), y compris sur une extraction Windows
+*.sh text eol=lf

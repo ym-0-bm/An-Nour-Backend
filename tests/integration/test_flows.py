@@ -142,8 +142,8 @@ def test_finance_donation_is_audited_with_token_author(api, seed_user, login, mo
 
     transaction = mongo_db.transactions.find_one({"reference": reference})
     assert transaction["created_by"] == "fin.integ"
-    # transaction_id est un String dans le schéma Prisma (pas un ObjectId)
-    audit = mongo_db.audit_logs.find_one({"transaction_id": str(transaction["_id"])})
+    # T8 : AuditLog.transaction_id est un ObjectId, comme Transaction.id (jointure correcte)
+    audit = mongo_db.audit_logs.find_one({"transaction_id": transaction["_id"]})
     assert audit["action"] == "CREATE" and audit["modified_by"] == "fin.integ"
 
     listed = api.get(f"{API}/finances/entrees", headers=headers)

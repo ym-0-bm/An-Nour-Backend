@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     MATRICULE_PREFIX: str = Field(default="ANNOUR", pattern=r"^[A-Z]{2,12}$")
     MATRICULE_YEAR: Optional[int] = Field(default=None, ge=2000, le=2099)
 
+    # T3 : d'où lire l'IP du client derrière le proxy (limitation de débit). À choisir après le diagnostic
+    # GET /admin/diagnostic/client-ip en production. Par défaut : dernière entrée de X-Forwarded-For.
+    CLIENT_IP_SOURCE: Literal[
+        "forwarded_last", "forwarded_first", "cf-connecting-ip", "true-client-ip", "direct"
+    ] = "forwarded_last"
+
     # Journalisation (B17)
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 

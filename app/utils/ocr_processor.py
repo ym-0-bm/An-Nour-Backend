@@ -5,7 +5,6 @@ import os
 import re
 import sys
 import shutil
-from typing import Tuple
 
 import cv2
 import numpy as np
