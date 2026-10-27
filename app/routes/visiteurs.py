@@ -1,7 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from pydantic import BaseModel
-from typing import Optional, List
-from datetime import datetime
+from typing import Optional
 
 from app.database import prisma
 from app.utils.auth import RequireAdmin

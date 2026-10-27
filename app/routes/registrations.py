@@ -3,8 +3,6 @@ from fastapi.responses import JSONResponse
 from typing import Optional, List
 from datetime import datetime, timezone
 import cloudinary.uploader
-import os
-import json
 import hashlib
 import hmac
 import logging

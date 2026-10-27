@@ -155,7 +155,7 @@ model Transaction {
 
 model AuditLog {
   id             String      @id @default(auto()) @map("_id") @db.ObjectId
-  transaction_id String
+  transaction_id String      @db.ObjectId
   transaction    Transaction @relation(fields: [transaction_id], references: [id])
   action         String      // "CREATE", "UPDATE", "DELETE", "RESTORE"
   field_changed  String?     // Champ modifié (pour UPDATE)

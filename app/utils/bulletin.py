@@ -114,3 +114,31 @@ async def calculer_rangs(niveau: str = None):
             moyennes[matricule] = moyenne
 
     return classer(moyennes), len(moyennes)
+
+
+async def rafraichir_rangs_annee(annee_scolaire: str) -> int:
+    """
+    T6 : recalcule ensemble le rang et l'effectif de TOUS les bulletins d'une année, niveau par niveau,
+    pour qu'un bulletin généré plus tôt ne garde pas un rang périmé. Retourne le nombre de bulletins modifiés.
+    """
+    bulletins = await prisma.bulletin.find_many(where={"annee_scolaire": annee_scolaire})
+    if not bulletins:
+        return 0
+    seminaristes = await prisma.seminariste.find_many(
+        where={"matricule": {"in": [b.matricule for b in bulletins]}}
+    )
+    niveau_de = {s.matricule: s.niveau for s in seminaristes}
+
+    classements: Dict[Optional[str], tuple] = {}
+    modifies = 0
+    for b in bulletins:
+        niveau = niveau_de.get(b.matricule)
+        if niveau not in classements:
+            classements[niveau] = await calculer_rangs(niveau)
+        rangs, effectif = classements[niveau]
+        rang = rangs.get(b.matricule)
+        if (b.rang, b.effectif_classe) != (rang, effectif):
+            await prisma.bulletin.update(where={"id": b.id}, data={"rang": rang, "effectif_classe": effectif})
+            modifies += 1
+    return modifies
+

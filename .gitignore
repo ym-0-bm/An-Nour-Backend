@@ -70,9 +70,11 @@ htmlcov/
 
 # Backup files
 *.bak
-backup/
+# Dossier de sauvegardes à la racine uniquement : scripts/backup/ (outillage B15) doit rester suivi
+/backup/
 # Sauvegardes (B15) : jamais de clé privée ni d archive dans le dépôt
 backup_private_key.pem
+*.pem
 *.archive.gz.cms
 *.archive.gz.cms.sha256
 backup-out/

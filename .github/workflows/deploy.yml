@@ -146,6 +146,13 @@ jobs:
           echo "UID du processus : $uid"
           [ "$uid" != "0" ]
 
+      # Partie 11 / T1 : parcours de bout en bout par HTTP contre l'API dans son image (OCR réel)
+      - name: 🧭 End-to-end journeys
+        env:
+          E2E_BASE_URL: http://127.0.0.1:8000
+          E2E_DATABASE_URL: ${{ env.INTEGRATION_DATABASE_URL }}
+        run: pytest -q tests/e2e --no-cov
+
       - name: 📋 API container log (on failure)
         if: failure()
         run: docker logs api 2>&1 | tail -n 100 || true

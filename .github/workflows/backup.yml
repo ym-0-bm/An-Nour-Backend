@@ -4,7 +4,11 @@ name: Sauvegarde MongoDB
 # Secrets requis (Settings → Secrets and variables → Actions) :
 #   BACKUP_DATABASE_URL : URI d'un utilisateur Atlas en LECTURE SEULE
 #   BACKUP_CERT_PEM     : certificat public (scripts/backup/generate_keys.sh) ; la clé privée reste hors ligne
-# Procédure de restauration : docs/SAUVEGARDE_RESTAURATION.md
+#   ATLAS_PUBLIC_KEY / ATLAS_PRIVATE_KEY : clé API Atlas de rôle « Project Network Access Manager » uniquement
+#   ATLAS_PROJECT_ID    : identifiant du projet Atlas (Project Settings)
+# Accès réseau (O3) : l'IP du runner est ajoutée à la liste d'accès Atlas pour 1 h au plus
+# (deleteAfterDate), puis retirée en fin de job, même en cas d'échec. Pas de 0.0.0.0/0.
+# Procédure : docs/SAUVEGARDE_RESTAURATION.md
 
 on:
   schedule:
@@ -18,11 +22,16 @@ concurrency:
   group: backup
   cancel-in-progress: false
 
+env:
+  ATLAS_API: https://cloud.mongodb.com/api/atlas/v2
+  ATLAS_ACCEPT: application/vnd.atlas.2023-01-01+json
+
 jobs:
   backup:
     name: Sauvegarde chiffrée
     # Version figée : le dépôt APT MongoDB ci-dessous est celui d'Ubuntu 24.04 (noble)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
 
     steps:
       - name: 📥 Checkout code
@@ -38,11 +47,53 @@ jobs:
           sudo apt-get install -y mongodb-database-tools
           mongodump --version | head -1
 
+      - name: 🌐 Runner public IP
+        id: runner
+        run: |
+          ip="$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]')"
+          [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || { echo "IP du runner introuvable" >&2; exit 1; }
+          echo "ip=$ip" >> "$GITHUB_OUTPUT"
+
+      - name: 🔓 Atlas — temporary access for this runner (1 h max)
+        env:
+          ATLAS_PUBLIC_KEY: ${{ secrets.ATLAS_PUBLIC_KEY }}
+          ATLAS_PRIVATE_KEY: ${{ secrets.ATLAS_PRIVATE_KEY }}
+          ATLAS_PROJECT_ID: ${{ secrets.ATLAS_PROJECT_ID }}
+          RUNNER_IP: ${{ steps.runner.outputs.ip }}
+        run: |
+          delete_after="$(date -u -d '+1 hour' +%Y-%m-%dT%H:%M:%SZ)"
+          curl -fsS --digest -u "$ATLAS_PUBLIC_KEY:$ATLAS_PRIVATE_KEY" \
+            -H "Accept: $ATLAS_ACCEPT" -H "Content-Type: application/json" \
+            -X POST "$ATLAS_API/groups/$ATLAS_PROJECT_ID/accessList" \
+            -d "[{\"ipAddress\":\"$RUNNER_IP\",\"comment\":\"GitHub Actions sauvegarde ${GITHUB_RUN_ID}\",\"deleteAfterDate\":\"$delete_after\"}]" \
+            > /dev/null
+          # L'entrée doit être propagée (ACTIVE) avant de se connecter
+          for i in $(seq 1 30); do
+            status="$(curl -fsS --digest -u "$ATLAS_PUBLIC_KEY:$ATLAS_PRIVATE_KEY" -H "Accept: $ATLAS_ACCEPT" \
+              "$ATLAS_API/groups/$ATLAS_PROJECT_ID/accessList/$RUNNER_IP/status" | jq -r '.STATUS')"
+            [ "$status" = "ACTIVE" ] && { echo "Accès Atlas actif jusqu'à $delete_after"; exit 0; }
+            sleep 10
+          done
+          echo "L'entrée d'accès Atlas n'est pas devenue active (dernier état : $status)" >&2
+          exit 1
+
       - name: 💾 Dump and encrypt
         env:
           BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
           BACKUP_CERT_PEM: ${{ secrets.BACKUP_CERT_PEM }}
         run: bash scripts/backup/backup.sh backup-out
+
+      - name: 🔒 Atlas — remove runner access
+        if: always() && steps.runner.outputs.ip != ''
+        env:
+          ATLAS_PUBLIC_KEY: ${{ secrets.ATLAS_PUBLIC_KEY }}
+          ATLAS_PRIVATE_KEY: ${{ secrets.ATLAS_PRIVATE_KEY }}
+          ATLAS_PROJECT_ID: ${{ secrets.ATLAS_PROJECT_ID }}
+          RUNNER_IP: ${{ steps.runner.outputs.ip }}
+        run: |
+          # Retrait immédiat ; à défaut, Atlas supprime l'entrée à son deleteAfterDate
+          curl -sS --digest -u "$ATLAS_PUBLIC_KEY:$ATLAS_PRIVATE_KEY" -H "Accept: $ATLAS_ACCEPT" \
+            -X DELETE "$ATLAS_API/groups/$ATLAS_PROJECT_ID/accessList/$RUNNER_IP" -o /dev/null -w "Retrait de l'accès Atlas : HTTP %{http_code}\n" || true
 
       - name: 📦 Upload encrypted backup (30 days)
         uses: actions/upload-artifact@v4

@@ -1,0 +1,73 @@
+name: Surveillance /health
+
+# T2 : alerte quand l'API ne répond plus ou que sa base est indisponible (/health ≠ 200).
+# - Échec → une issue « incident » est ouverte (une seule à la fois) : GitHub la notifie aux personnes
+#   qui suivent le dépôt.
+# - Retour à la normale → l'issue est commentée et fermée.
+# Variable requise (Settings → Secrets and variables → Actions → Variables) :
+#   API_HEALTH_URL, ex. https://an-nour-backend-5mf0.onrender.com/health
+# Remarque : GitHub désactive les workflows planifiés après 60 jours sans activité sur le dépôt.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Contrôle de disponibilité
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 🩺 Probe /health
+        id: probe
+        env:
+          URL: ${{ vars.API_HEALTH_URL }}
+        run: |
+          [ -n "$URL" ] || { echo "Variable API_HEALTH_URL non définie" >&2; exit 1; }
+          # Plusieurs tentatives : une instance Render gratuite met jusqu'à ~60 s à se réveiller
+          code=000
+          for attempt in 1 2 3; do
+            code="$(curl -s -o body.json -w '%{http_code}' -m 90 "$URL" || true)"
+            [ "$code" = "200" ] && break
+            sleep 20
+          done
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "HTTP $code — $(cat body.json 2>/dev/null | head -c 200)"
+
+      - name: 🚨 Open incident (once)
+        if: steps.probe.outputs.code != '200'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODE: ${{ steps.probe.outputs.code }}
+        run: |
+          gh label create incident --color B60205 --description "Indisponibilité détectée par la surveillance" \
+            --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          open="$(gh issue list --repo "$GITHUB_REPOSITORY" --label incident --state open --json number --jq '.[0].number')"
+          if [ -z "$open" ]; then
+            gh issue create --repo "$GITHUB_REPOSITORY" --label incident \
+              --title "Incident : /health en échec (HTTP $CODE)" \
+              --body "La surveillance a détecté une indisponibilité le $(date -u '+%Y-%m-%d %H:%M UTC') : HTTP $CODE. Exécution : $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          else
+            echo "Incident déjà ouvert : #$open"
+          fi
+          exit 1
+
+      - name: ✅ Close open incident
+        if: steps.probe.outputs.code == '200'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for n in $(gh issue list --repo "$GITHUB_REPOSITORY" --label incident --state open --json number --jq '.[].number'); do
+            gh issue close "$n" --repo "$GITHUB_REPOSITORY" \
+              --comment "Service rétabli le $(date -u '+%Y-%m-%d %H:%M UTC') (HTTP 200)."
+          done
